@@ -233,7 +233,7 @@ function generateOrdersForDate(dateStr) {
         }
     });
 
-    addLog(`📚 已生成${orders.length}条基于真实课程表的骑行订单`);
+    addLog(`已生成${orders.length}条基于真实课程表的骑行订单`, 'success');
 
     // 按时间排序
     return orders.sort((a, b) => {
@@ -252,7 +252,7 @@ function onDateChange() {
     historicalData[currentDate] = calculateDailySummary();
 
     resetSimulation();
-    addLog(`📅 切换至 ${currentDate}，MMoE-AM-BiLSTM重新预测需求...`);
+    addLog(`切换至 ${currentDate}，MMoE-AM-BiLSTM预测模型重新加载`, 'system');
 }
 
 // ========== 第6部分：选项卡切换 ==========
@@ -395,13 +395,21 @@ function startSimulation() {
         if (currentMinute >= 60) {
             currentMinute = 0;
             currentHour++;
+        }
 
-            if (currentHour > SIMULATION_END_HOUR) {
-                togglePlay();
-                addLog('🎉 今日仿真结束！');
-                return;
-            }
-            addLog(`⏰ ${currentHour}:00 - ALNS-SA算法正在优化调度方案...`);
+        // 检查是否超过结束时间（22:00）
+        if (currentHour > SIMULATION_END_HOUR || (currentHour === SIMULATION_END_HOUR && currentMinute > 0)) {
+            // 重置到22:00整点
+            currentHour = SIMULATION_END_HOUR;
+            currentMinute = 0;
+            togglePlay();
+            addLog('今日仿真结束，系统运行完成！', 'success');
+            return;
+        }
+
+        // 整点日志
+        if (currentMinute === 0) {
+            addLog(`⏰ ${currentHour}:00 - ALNS-SA算法分析中...`, 'system');
         }
 
         updateSimulation();
@@ -414,11 +422,21 @@ function updateSimulation() {
     const timeDisplay = document.getElementById('currentTime');
     if (timeDisplay) timeDisplay.textContent = timeStr;
 
+    // 同步更新日期显示
+    const dateDisplay = document.getElementById('dateDisplay');
+    if (dateDisplay) dateDisplay.textContent = currentDate;
+
     // 1. 核心逻辑处理
     processOrders();
     updateStatistics();
 
-    // 2. 收集实时数据 (每10分钟采样一次)
+    // 2. 记录实时事件（新增）
+    logPeakHourInfo(); // 记录高峰时段信息
+    if (currentMinute % 5 === 0) { // 每5分钟检查一次站点状态
+        logStationStatus();
+    }
+
+    // 3. 收集实时数据 (每10分钟采样一次)
     if (currentMinute % 10 === 0) {
         const total = stations.reduce((sum, s) => sum + s.currentBikes, 0);
         const active = currentOrders.filter(o => o.active).length;
@@ -494,6 +512,8 @@ function processOrders() {
                 stations[order.from].currentBikes--;
                 order.active = true;
                 order.status = 'active';
+                // 记录骑行事件
+                logRideEvent(order);
             }
         }
 
@@ -594,6 +614,18 @@ function resetSimulation() {
         btn.className = 'btn btn-play';
     }
 
+    // 立即更新时间显示
+    const timeDisplay = document.getElementById('currentTime');
+    if (timeDisplay) {
+        timeDisplay.textContent = `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`;
+    }
+
+    // 更新日期显示
+    const dateDisplay = document.getElementById('dateDisplay');
+    if (dateDisplay) {
+        dateDisplay.textContent = currentDate;
+    }
+
     stations.forEach(s => {
         s.currentBikes = s.initialBikes;
         s.status = 'normal';
@@ -607,7 +639,22 @@ function resetSimulation() {
 
     liveLogs = [];
     const logContainer = document.getElementById('liveLogs');
-    if (logContainer) logContainer.innerHTML = '';
+    if (logContainer) {
+        logContainer.innerHTML = `
+            <div class="log-item" style="border-left-color: #06ffa5;">
+                <span style="margin-right: 5px;">✅</span>
+                [07:00] 系统初始化完成，准备就绪
+            </div>
+            <div class="log-item" style="border-left-color: #888;">
+                <span style="margin-right: 5px;">⚙️</span>
+                [07:00] MMoE-AM-BiLSTM预测模型已加载
+            </div>
+            <div class="log-item" style="border-left-color: #888;">
+                <span style="margin-right: 5px;">⚙️</span>
+                [07:00] ALNS-SA智能调度算法就绪
+            </div>
+        `;
+    }
 
     timeSeriesData = { times: [], inStation: [], active: [] };
 
@@ -619,7 +666,7 @@ function resetSimulation() {
 
     updateStatistics();
     updateMapMarkers();
-    addLog('🔄 系统已重置');
+    addLog('系统已重置至初始状态', 'system');
 }
 
 function updateSpeed(value) {
@@ -668,22 +715,90 @@ function onTimeSliderChange(value) {
 }
 
 // ========== 第9部分：日志系统 ==========
-function addLog(message) {
+function addLog(message, type = 'info') {
     const time = `${String(currentHour).padStart(2,'0')}:${String(currentMinute).padStart(2,'0')}`;
 
-    if (message.includes('ALNS-SA')) {
-        // 减少刷屏
-        if (Math.random() > 0.1) return;
-    }
+    // 避免刷屏：骑行类消息降低频率
+    if (type === 'ride' && Math.random() > 0.3) return;
+    if (type === 'station' && Math.random() > 0.5) return;
 
-    liveLogs.unshift({ time, message });
-    if (liveLogs.length > 20) liveLogs.pop();
+    liveLogs.unshift({ time, message, type });
+    if (liveLogs.length > 30) liveLogs.pop();
 
     const container = document.getElementById('liveLogs');
     if (container) {
-        container.innerHTML = liveLogs.map(log =>
-            `<div class="log-item">[${log.time}] ${log.message}</div>`
-        ).join('');
+        container.innerHTML = liveLogs.map(log => {
+            let icon = '📝';
+            let color = '#06ffa5';
+
+            switch(log.type) {
+                case 'warning': icon = '⚠️'; color = '#ffbe0b'; break;
+                case 'error': icon = '❌'; color = '#ff006e'; break;
+                case 'success': icon = '✅'; color = '#06ffa5'; break;
+                case 'ride': icon = '🚴'; color = '#00d4ff'; break;
+                case 'station': icon = '🏢'; color = '#7b2cbf'; break;
+                case 'dispatch': icon = '🚚'; color = '#ff006e'; break;
+                case 'system': icon = '⚙️'; color = '#888'; break;
+                default: icon = '📢'; color = '#06ffa5';
+            }
+
+            return `<div class="log-item" style="border-left-color: ${color};">
+                <span style="margin-right: 5px;">${icon}</span>
+                [${log.time}] ${log.message}
+            </div>`;
+        }).join('');
+    }
+}
+
+// 记录骑行事件
+function logRideEvent(order) {
+    const fromStation = stations[order.from];
+    const toStation = stations[order.to];
+    if (fromStation && toStation && order.scenario) {
+        addLog(`${fromStation.name} → ${toStation.name}（${order.scenario}）`, 'ride');
+    }
+}
+
+// 记录站点状态变化
+function logStationStatus() {
+    const shortage = stations.filter(s => s.currentBikes < 3);
+    const surplus = stations.filter(s => s.currentBikes > 40);
+    const lowBikes = stations.filter(s => s.currentBikes >= 3 && s.currentBikes < 8);
+
+    if (shortage.length > 0 && Math.random() > 0.7) {
+        const station = shortage[Math.floor(Math.random() * shortage.length)];
+        addLog(`${station.name} 严重缺车（仅剩${station.currentBikes}辆）`, 'warning');
+    }
+
+    if (surplus.length > 0 && Math.random() > 0.7) {
+        const station = surplus[Math.floor(Math.random() * surplus.length)];
+        addLog(`${station.name} 车辆积压（已达${station.currentBikes}辆）`, 'warning');
+    }
+
+    if (lowBikes.length > 0 && Math.random() > 0.9) {
+        const station = lowBikes[Math.floor(Math.random() * lowBikes.length)];
+        addLog(`${station.name} 车辆偏少（${station.currentBikes}辆），建议关注`, 'station');
+    }
+}
+
+// 记录高峰时段提示
+function logPeakHourInfo() {
+    if (currentMinute === 0 || currentMinute === 30) { // 每半小时记录一次
+        if (currentHour === 7 && currentMinute === 30) {
+            addLog('早餐时间开始，食堂周边需求增加', 'system');
+        } else if (currentHour === 7 && currentMinute === 45) {
+            addLog('第1节课即将开始，宿舍区→教学楼出行高峰', 'system');
+        } else if (currentHour === 11 && currentMinute === 50) {
+            addLog('午餐高峰来临，食堂周边即将出现积压', 'system');
+        } else if (currentHour === 17 && currentMinute === 0) {
+            addLog('晚餐时段开始，教学楼→食堂出行增加', 'system');
+        } else if (currentHour === 18 && currentMinute === 30) {
+            addLog('外出娱乐高峰：大量学生前往青蓝门', 'system');
+        } else if (currentHour === 20 && currentMinute === 0) {
+            addLog('返程高峰：青蓝门→宿舍区回流开始', 'system');
+        } else if (currentHour === 20 && currentMinute === 30) {
+            addLog('晚自习结束高峰，教学楼→宿舍区出行增加', 'system');
+        }
     }
 }
 
@@ -1063,7 +1178,7 @@ function generateDispatchRecommendation() {
 
 function executeDispatch() {
     if (!window.currentDispatchPlan || window.currentDispatchPlan.length === 0) {
-        addLog("⚠️ 当前无调度方案");
+        addLog("当前系统平衡，无需调度", 'system');
         return;
     }
 
@@ -1079,10 +1194,13 @@ function executeDispatch() {
                 time: `${currentHour}:${String(currentMinute).padStart(2, '0')}`,
                 desc: `从 ${plan.from} 调运 ${plan.amount} 辆到 ${plan.to}`
             });
+
+            // 添加日志记录
+            addLog(`调度: ${plan.from} → ${plan.to} (${plan.amount}辆)`, 'dispatch');
         }
     });
 
-    addLog("✅ 调度方案执行完毕");
+    addLog(`调度方案执行完成，共执行${window.currentDispatchPlan.length}项任务`, 'success');
     updateStatistics();
     updateMapMarkers();
     updateDispatchView();
@@ -1101,14 +1219,14 @@ function renderHeatmapTab() {
     content.innerHTML = `
         <div style="display:flex; gap:20px; height:600px;">
             <div style="flex:2; background: white; border-radius: 15px; padding: 20px; border:1px solid #eee;">
-                <h3 style="margin-bottom: 15px;">🔥 站点实时热力图</h3>
+                <h3 style="margin-bottom: 15px; color: #00d4ff; font-size: 20px; font-weight: 700;">🔥 站点实时热力图</h3>
                 <div id="heatmap-map" style="height: 500px; border-radius: 10px;"></div>
                 <div style="margin-top:10px; font-size:12px; color:#666; text-align:center;">
                     颜色说明: 🔵 低频  🟢 正常  🟡 繁忙  🔴 拥堵
                 </div>
             </div>
             <div style="flex:1; background: white; border-radius: 15px; padding: 20px; border:1px solid #eee; overflow-y:auto;">
-                <h3 style="margin-bottom: 15px;">📊 热力排名</h3>
+                <h3 style="margin-bottom: 15px; color: #00d4ff; font-size: 20px; font-weight: 700;">📊 热力排名</h3>
                 <div id="heatmap-ranking"></div>
             </div>
         </div>
@@ -1128,41 +1246,112 @@ function renderHeatmapTab() {
 function updateHeatmapView() {
     if (!heatmapMapInstance || !document.getElementById('heatmap-map')) return;
 
-    // 移除旧的热力层
+    // 移除旧的热力层和标记
     if (heatLayer) {
         heatmapMapInstance.removeLayer(heatLayer);
     }
 
-    // 计算每个站点的热力值
-    // fix 脚本使用 origin/destination, 这里通过模拟数据生成时已添加这两个字段
-    const heatData = stations.map(station => {
-        const incomingOrders = currentOrders.filter(o => o.destination === station.id && o.completed).length;
-        const outgoingOrders = currentOrders.filter(o => o.origin === station.id).length;
-        const totalHeat = incomingOrders + outgoingOrders;
+    // 清除旧的标记
+    heatmapMapInstance.eachLayer(layer => {
+        if (layer instanceof L.Marker) {
+            heatmapMapInstance.removeLayer(layer);
+        }
+    });
 
-        // 归一化热度，防止全是红的
-        let intensity = Math.min(totalHeat / 50, 1.0); // 假设50次操作为满热度
-        if (intensity < 0.1) intensity = 0.1; // 保持最低可见度
+    // 计算每个站点的热力值（基于当前车辆数和活动订单）
+    const heatData = stations.map(station => {
+        // 使用当前车辆数作为热力值的主要指标
+        const bikeCount = station.currentBikes;
+        const activeOrders = currentOrders.filter(o =>
+            (o.from === stations.indexOf(station) && o.active) ||
+            (o.to === stations.indexOf(station) && o.active)
+        ).length;
+
+        // 热力值计算：车辆数量 + 活动订单数 * 3（活动订单权重更高）
+        const heatValue = bikeCount + activeOrders * 3;
+
+        // 归一化到0-1，使用动态最大值
+        const maxHeat = 60; // 假设60为最大热力值
+        let intensity = Math.min(heatValue / maxHeat, 1.0);
+        intensity = Math.max(intensity, 0.2); // 保持最低可见度为0.2
 
         return [station.lat, station.lng, intensity];
     });
 
-    // 添加热力层 (需要 leaflet-heat.js)
+    // 添加增强的热力层
     if (typeof L.heatLayer === 'function') {
         heatLayer = L.heatLayer(heatData, {
-            radius: 30,
-            blur: 35,
+            radius: 50,        // 增大半径（原30）
+            blur: 45,          // 增大模糊（原35）
             maxZoom: 17,
             max: 1.0,
+            minOpacity: 0.4,   // 增加最小不透明度
             gradient: {
-                0.0: 'blue',
-                0.3: 'cyan',
-                0.5: 'lime',
-                0.7: 'yellow',
-                1.0: 'red'
+                0.0: '#0000ff',   // 蓝色
+                0.2: '#00ffff',   // 青色
+                0.4: '#00ff00',   // 绿色
+                0.6: '#ffff00',   // 黄色
+                0.8: '#ff9900',   // 橙色
+                1.0: '#ff0000'    // 红色
             }
         }).addTo(heatmapMapInstance);
     }
+
+    // 添加站点标记，显示车辆数
+    stations.forEach(station => {
+        let color = '#06ffa5'; // 绿色
+        let size = 40;
+
+        if (station.currentBikes < 3) {
+            color = '#ff006e'; // 红色
+            size = 45;
+        } else if (station.currentBikes < 8) {
+            color = '#ffbe0b'; // 黄色
+            size = 42;
+        } else if (station.currentBikes > 40) {
+            color = '#ff006e'; // 红色
+            size = 50;
+        } else if (station.currentBikes > 25) {
+            color = '#ffbe0b'; // 黄色
+            size = 45;
+        }
+
+        const icon = L.divIcon({
+            html: `<div style="position: relative; width: ${size}px;">
+                       <div style="background:${color};width:${size}px;height:${size}px;border-radius:50%;
+                          display:flex;align-items:center;justify-content:center;color:white;
+                          font-weight:bold;font-size:${size/2.5}px;border:3px solid white;
+                          box-shadow:0 4px 15px rgba(0,0,0,0.5);
+                          transition:all 0.3s;">
+                          ${station.currentBikes}
+                       </div>
+                       <div style="position: absolute; top: ${size + 5}px; left: 50%; transform: translateX(-50%);
+                          background: rgba(0, 0, 0, 0.9); color: #00d4ff; padding: 6px 14px; 
+                          border-radius: 8px; white-space: nowrap; font-size: 14px; font-weight: 700;
+                          box-shadow: 0 3px 12px rgba(0,0,0,0.5); z-index: 1000;
+                          border: 2px solid #00d4ff;">
+                          ${station.name}
+                       </div>
+                   </div>`,
+            iconSize: [size, size + 45],
+            iconAnchor: [size/2, size/2],
+            className: ''
+        });
+
+        L.marker([station.lat, station.lng], { icon: icon }).addTo(heatmapMapInstance)
+            .bindPopup(`
+                <div style="min-width:150px;">
+                    <b style="font-size:16px;color:#00d4ff;">${station.name}</b><br><br>
+                    <div style="color:#333;">
+                        🚲 当前车辆: <b style="color:${color};">${station.currentBikes}</b> 辆<br>
+                        📊 活动订单: <b>${currentOrders.filter(o => 
+                            (o.from === stations.indexOf(station) && o.active) ||
+                            (o.to === stations.indexOf(station) && o.active)
+                        ).length}</b> 单
+                    </div>
+                </div>
+            `);
+    });
 
     // 更新热力排名
     updateHeatmapRanking();
@@ -1188,12 +1377,12 @@ function updateHeatmapRanking() {
 
     const maxHeat = stationHeat[0]?.total || 1;
     rankingContainer.innerHTML = stationHeat.map((station, index) => `
-        <div style="background: #f8f9fa; border-radius: 8px; padding: 12px; margin-bottom: 10px; display: flex; align-items: center; gap: 10px;">
-            <div style="font-weight: bold; color: #667eea; min-width: 20px;">#${index + 1}</div>
+        <div style="background: #f8f9fa; border-radius: 8px; padding: 12px; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; border: 1px solid #e0e0e0;">
+            <div style="font-weight: bold; color: #667eea; min-width: 30px; font-size: 16px;">#${index + 1}</div>
             <div style="flex: 1;">
-                <div style="font-weight: bold; font-size:14px;">${station.name}</div>
-                <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
-                    总热度: ${station.total} (进:${station.incoming}/出:${station.outgoing})
+                <div style="font-weight: 700; font-size: 15px; color: #1a1a1a; margin-bottom: 4px;">${station.name}</div>
+                <div style="font-size: 12px; color: #666; margin-bottom: 6px;">
+                    总热度: <span style="font-weight: 600; color: #333;">${station.total}</span> (进:<span style="color: #06ffa5;">${station.incoming}</span>/出:<span style="color: #ff006e;">${station.outgoing}</span>)
                 </div>
                 <div style="height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden;">
                     <div style="height: 100%; width: ${(station.total / maxHeat * 100).toFixed(1)}%; background: linear-gradient(90deg, #667eea, #764ba2);"></div>
@@ -1457,7 +1646,7 @@ function exportData() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    addLog('📥 数据已导出为CSV文件');
+    addLog('CSV数据文件导出成功', 'success');
 }
 
 function generateCSV() {
@@ -1479,59 +1668,991 @@ async function generatePDFReport() {
     if (loadingOverlay) loadingOverlay.style.display = 'flex';
 
     try {
-        addLog("📄 正在生成完整系统报告...");
+        addLog("正在生成PDF报告...", 'system');
 
-        // 创建报告容器
-        const reportContainer = document.createElement('div');
-        reportContainer.style.cssText = 'width: 800px; padding: 40px; background: white; font-family: "Microsoft YaHei", "Noto Sans SC", Arial; position:fixed; top:-9999px; left:0; z-index:9999;';
-
-        // 生成报告内容
-        const reportHTML = await generateReportHTML();
-        reportContainer.innerHTML = reportHTML;
-
-        document.body.appendChild(reportContainer);
-
-        // 使用html2canvas截图
-        const canvas = await html2canvas(reportContainer, {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: '#ffffff',
-            logging: false
-        });
-
-        document.body.removeChild(reportContainer);
-
-        // 生成PDF
-        const imgData = canvas.toDataURL('image/png');
         const { jsPDF } = window.jspdf;
         const pdf = new jsPDF('p', 'mm', 'a4');
 
-        const imgWidth = 210;
-        const pageHeight = 297;
-        const imgHeight = canvas.height * imgWidth / canvas.width;
-        let heightLeft = imgHeight;
-        let position = 0;
+        // === 生成封面页（使用canvas绘制，支持中文）===
+        const coverCanvas = document.createElement('canvas');
+        coverCanvas.width = 794;  // A4宽度（像素）
+        coverCanvas.height = 1123; // A4高度（像素）
+        const ctx = coverCanvas.getContext('2d');
 
-        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
+        // 渐变背景
+        const gradient = ctx.createLinearGradient(0, 0, 794, 1123);
+        gradient.addColorStop(0, '#0a0e27');
+        gradient.addColorStop(0.5, '#1a1f3a');
+        gradient.addColorStop(1, '#2d1b4e');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, 794, 1123);
 
-        while (heightLeft > 0) {
-            position = heightLeft - imgHeight;
-            pdf.addPage();
-            pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-            heightLeft -= pageHeight;
+        // 装饰性圆圈
+        ctx.globalAlpha = 0.1;
+        for (let i = 0; i < 15; i++) {
+            const x = Math.random() * 794;
+            const y = Math.random() * 1123;
+            const radius = Math.random() * 50 + 20;
+            ctx.fillStyle = '#00d4ff';
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1.0;
+
+        // 顶部装饰线条
+        ctx.strokeStyle = '#00d4ff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(100, 200);
+        ctx.lineTo(694, 200);
+        ctx.stroke();
+
+        // 主标题
+        ctx.font = 'bold 72px Arial';
+        ctx.fillStyle = '#00d4ff';
+        ctx.textAlign = 'center';
+        ctx.fillText('JXNU 智行系统', 397, 300);
+
+        // 副标题
+        ctx.font = 'bold 42px Arial';
+        ctx.fillStyle = '#7b2cbf';
+        ctx.fillText('共享单车智能调度系统', 397, 380);
+        ctx.fillText('运营分析报告', 397, 440);
+
+        // 日期和时间
+        ctx.font = '28px Arial';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(`报告日期: ${currentDate}`, 397, 540);
+        ctx.fillText(`生成时间: ${currentHour}:${String(currentMinute).padStart(2,'0')}`, 397, 590);
+
+        // 技术标签背景框
+        ctx.fillStyle = 'rgba(0, 212, 255, 0.2)';
+        ctx.fillRect(150, 650, 494, 120);
+        ctx.strokeStyle = '#00d4ff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(150, 650, 494, 120);
+
+        // 技术标签
+        ctx.font = '24px Arial';
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('基于 MMoE-AM-BiLSTM 时空需求预测模型', 397, 700);
+        ctx.fillText('与 ALNS-SA 动态智能调度算法', 397, 740);
+
+        // 底部装饰线
+        ctx.strokeStyle = '#7b2cbf';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(100, 900);
+        ctx.lineTo(694, 900);
+        ctx.stroke();
+
+        // 底部信息
+        ctx.font = '20px Arial';
+        ctx.fillStyle = '#999999';
+        ctx.fillText('江西师范大学瑶湖校区', 397, 960);
+        ctx.fillText('智能调度仿真系统', 397, 1000);
+
+        // 将canvas转换为图片并添加到PDF
+        const coverImg = coverCanvas.toDataURL('image/png');
+        pdf.addImage(coverImg, 'PNG', 0, 0, 210, 297);
+
+        // === 第2页：执行摘要 ===
+        pdf.addPage();
+        await addContentPage(pdf, '执行摘要', async () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 794;
+            canvas.height = 1123;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 794, 1123);
+
+            let y = 80;
+
+            // 标题
+            ctx.font = 'bold 40px Arial';
+            ctx.fillStyle = '#00d4ff';
+            ctx.fillText('执行摘要', 60, y);
+            y += 60;
+
+            // 分隔线
+            ctx.strokeStyle = '#00d4ff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(60, y);
+            ctx.lineTo(734, y);
+            ctx.stroke();
+            y += 50;
+
+            // 概况统计
+            const totalBikes = stations.reduce((sum, s) => sum + s.currentBikes, 0);
+            const activeBikes = currentOrders.filter(o => o.active).length;
+            const completedTrips = currentOrders.filter(o => o.completed).length;
+            const utilizationRate = ((activeBikes / totalBikes) * 100).toFixed(1);
+
+            const stats = [
+                { label: '车辆总数', value: totalBikes, unit: '辆', color: '#00d4ff', bg: '#e6f7ff' },
+                { label: '在途车辆', value: activeBikes, unit: '辆', color: '#ff006e', bg: '#ffe6f0' },
+                { label: '完成订单', value: completedTrips, unit: '单', color: '#06ffa5', bg: '#e6fff5' },
+                { label: '调度次数', value: dispatchHistory.length, unit: '次', color: '#ffbe0b', bg: '#fff8e6' },
+            ];
+
+            // 绘制统计卡片
+            for (let i = 0; i < stats.length; i++) {
+                const row = Math.floor(i / 2);
+                const col = i % 2;
+                const x = 60 + col * 350;
+                const cardY = y + row * 140;
+                const stat = stats[i];
+
+                // 卡片背景
+                ctx.fillStyle = stat.bg;
+                ctx.fillRect(x, cardY, 320, 120);
+                ctx.strokeStyle = stat.color;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(x, cardY, 320, 120);
+
+                // 标签
+                ctx.font = '24px Arial';
+                ctx.fillStyle = '#666666';
+                ctx.textAlign = 'left';
+                ctx.fillText(stat.label, x + 20, cardY + 40);
+
+                // 数值
+                ctx.font = 'bold 48px Arial';
+                ctx.fillStyle = stat.color;
+                ctx.fillText(stat.value + ' ' + stat.unit, x + 20, cardY + 90);
+            }
+            y += 300;
+
+            // 关键发现
+            ctx.font = 'bold 32px Arial';
+            ctx.fillStyle = '#333333';
+            ctx.textAlign = 'left';
+            ctx.fillText('关键发现', 60, y);
+            y += 50;
+
+            ctx.font = '24px Arial';
+            ctx.fillStyle = '#555555';
+            const findings = [
+                `当前系统利用率为 ${utilizationRate}%`,
+                `平均每小时完成 ${Math.round(completedTrips / (currentHour - SIMULATION_START_HOUR + 1))} 笔订单`,
+                `调度系统累计执行 ${dispatchHistory.length} 次优化`,
+                `系统运行时长: ${currentHour - SIMULATION_START_HOUR}小时${currentMinute}分钟`
+            ];
+
+            findings.forEach((finding, i) => {
+                ctx.fillText(`• ${finding}`, 80, y + i * 45);
+            });
+
+            const img = canvas.toDataURL('image/png');
+            pdf.addImage(img, 'PNG', 0, 0, 210, 297);
+        });
+
+        // === 第3页：站点状态详细分析 ===
+        pdf.addPage();
+        await addContentPage(pdf, '站点状态分析', async () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 794;
+            canvas.height = 1123;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 794, 1123);
+
+            let y = 80;
+
+            // 标题
+            ctx.font = 'bold 40px Arial';
+            ctx.fillStyle = '#00d4ff';
+            ctx.fillText('站点状态分析', 60, y);
+            y += 60;
+
+            // 分隔线
+            ctx.strokeStyle = '#00d4ff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(60, y);
+            ctx.lineTo(734, y);
+            ctx.stroke();
+            y += 50;
+
+            // 表格头
+            ctx.fillStyle = '#333333';
+            ctx.fillRect(60, y, 674, 40);
+            ctx.font = 'bold 22px Arial';
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'left';
+            ctx.fillText('站点名称', 80, y + 27);
+            ctx.fillText('当前', 320, y + 27);
+            ctx.fillText('初始', 420, y + 27);
+            ctx.fillText('使用率', 510, y + 27);
+            ctx.fillText('状态', 630, y + 27);
+            y += 40;
+
+            // 表格内容
+            ctx.font = '20px Arial';
+            stations.forEach((s, index) => {
+                // 斑马纹
+                if (index % 2 === 0) {
+                    ctx.fillStyle = '#f8f8f8';
+                    ctx.fillRect(60, y, 674, 35);
+                }
+
+                // 站点名称
+                ctx.fillStyle = '#333333';
+                ctx.fillText(s.name, 80, y + 24);
+
+                // 当前车辆
+                ctx.fillText(String(s.currentBikes), 320, y + 24);
+
+                // 初始配置
+                ctx.fillText(String(s.initialBikes), 420, y + 24);
+
+                // 使用率
+                const rate = ((s.currentBikes / s.initialBikes) * 100).toFixed(0);
+                ctx.fillText(rate + '%', 510, y + 24);
+
+                // 状态
+                let statusText = '正常';
+                let statusColor = '#06ffa5';
+                if (s.currentBikes < 5) { statusText = '缺车'; statusColor = '#ff006e'; }
+                else if (s.currentBikes > 30) { statusText = '积压'; statusColor = '#ff006e'; }
+                else if (s.currentBikes < 10) { statusText = '偏少'; statusColor = '#ffbe0b'; }
+                else if (s.currentBikes > 25) { statusText = '较多'; statusColor = '#ffbe0b'; }
+
+                ctx.fillStyle = statusColor;
+                ctx.fillText(statusText, 630, y + 24);
+
+                y += 35;
+            });
+
+            const img = canvas.toDataURL('image/png');
+            pdf.addImage(img, 'PNG', 0, 0, 210, 297);
+        });
+
+        // === 第4页：需求分析与预测 ===
+        pdf.addPage();
+        await addContentPage(pdf, '需求分析', async () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 794;
+            canvas.height = 1123;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 794, 1123);
+
+            let y = 80;
+
+            // 标题
+            ctx.font = 'bold 40px Arial';
+            ctx.fillStyle = '#00d4ff';
+            ctx.fillText('需求分析与预测', 60, y);
+            y += 60;
+
+            ctx.strokeStyle = '#00d4ff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(60, y);
+            ctx.lineTo(734, y);
+            ctx.stroke();
+            y += 50;
+
+            // 高峰时段分析
+            ctx.font = 'bold 28px Arial';
+            ctx.fillStyle = '#333333';
+            ctx.fillText('高峰时段分析', 60, y);
+            y += 45;
+
+            ctx.font = '22px Arial';
+            ctx.fillStyle = '#555555';
+            const peakInfo = [
+                '早高峰 (7:00-9:00): 北区宿舍 → 教学楼',
+                '午间 (12:00-14:00): 教学楼 → 食堂',
+                '晚高峰 (17:00-19:00): 教学楼 → 食堂/宿舍',
+                '晚间 (18:00-22:00): 校内 → 青蓝门'
+            ];
+
+            peakInfo.forEach((info, i) => {
+                ctx.fillText(`• ${info}`, 80, y + i * 40);
+            });
+            y += 180;
+
+            // 热点站点
+            ctx.font = 'bold 28px Arial';
+            ctx.fillStyle = '#333333';
+            ctx.fillText('热点站点TOP 5', 60, y);
+            y += 45;
+
+            const topStations = [...stations]
+                .sort((a, b) => b.currentBikes - a.currentBikes)
+                .slice(0, 5);
+
+            ctx.font = '22px Arial';
+            topStations.forEach((s, i) => {
+                ctx.fillStyle = '#555555';
+                ctx.fillText(`${i + 1}. ${s.name}`, 80, y);
+
+                // 绘制车辆数量条形图
+                const barWidth = (s.currentBikes / 50) * 300;
+                ctx.fillStyle = '#00d4ff';
+                ctx.fillRect(320, y - 20, barWidth, 25);
+
+                // 显示数量
+                ctx.fillStyle = '#333333';
+                ctx.fillText(`${s.currentBikes}辆`, 640, y);
+
+                y += 45;
+            });
+
+            const img = canvas.toDataURL('image/png');
+            pdf.addImage(img, 'PNG', 0, 0, 210, 297);
+        });
+
+        // === 第5页：调度优化建议 ===
+        pdf.addPage();
+        await addContentPage(pdf, '调度建议', async () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 794;
+            canvas.height = 1123;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 794, 1123);
+
+            let y = 80;
+
+            ctx.font = 'bold 40px Arial';
+            ctx.fillStyle = '#00d4ff';
+            ctx.fillText('智能调度优化建议', 60, y);
+            y += 60;
+
+            ctx.strokeStyle = '#00d4ff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(60, y);
+            ctx.lineTo(734, y);
+            ctx.stroke();
+            y += 50;
+
+            const shortageStations = stations.filter(s => s.currentBikes < 5);
+            const surplusStations = stations.filter(s => s.currentBikes > 30);
+
+            // 紧急调度建议
+            if (shortageStations.length > 0) {
+                ctx.font = 'bold 28px Arial';
+                ctx.fillStyle = '#ff006e';
+                ctx.fillText('⚠️ 紧急调度需求', 60, y);
+                y += 45;
+
+                ctx.font = '22px Arial';
+                ctx.fillStyle = '#555555';
+                shortageStations.forEach(s => {
+                    ctx.fillText(`• ${s.name}: 仅剩 ${s.currentBikes} 辆，建议立即补充`, 80, y);
+                    y += 40;
+                });
+                y += 20;
+            }
+
+            // 车辆积压建议
+            if (surplusStations.length > 0) {
+                ctx.font = 'bold 28px Arial';
+                ctx.fillStyle = '#ffbe0b';
+                ctx.fillText('📊 车辆积压区域', 60, y);
+                y += 45;
+
+                ctx.font = '22px Arial';
+                ctx.fillStyle = '#555555';
+                surplusStations.forEach(s => {
+                    ctx.fillText(`• ${s.name}: 已有 ${s.currentBikes} 辆，建议疏导`, 80, y);
+                    y += 40;
+                });
+                y += 20;
+            }
+
+            // 时段建议
+            ctx.font = 'bold 28px Arial';
+            ctx.fillStyle = '#333333';
+            ctx.fillText('💡 时段优化建议', 60, y);
+            y += 45;
+
+            ctx.font = '22px Arial';
+            ctx.fillStyle = '#555555';
+            const suggestions = [];
+            if (currentHour >= 7 && currentHour < 9) {
+                suggestions.push('早高峰：加强宿舍区→教学区路线');
+            }
+            if (currentHour >= 12 && currentHour < 14) {
+                suggestions.push('午餐时段：重点保障食堂周边供应');
+            }
+            if (currentHour >= 17 && currentHour < 19) {
+                suggestions.push('晚高峰：注意教学区回流宿舍区');
+            }
+            if (currentHour >= 18 && currentHour < 22) {
+                suggestions.push('晚间：关注青蓝门出校需求');
+            }
+            suggestions.push('建议配合MMoE-AM-BiLSTM模型预测未来需求');
+            suggestions.push('运用ALNS-SA算法优化调度路径');
+
+            suggestions.forEach(sug => {
+                ctx.fillText(`• ${sug}`, 80, y);
+                y += 40;
+            });
+
+            const img = canvas.toDataURL('image/png');
+            pdf.addImage(img, 'PNG', 0, 0, 210, 297);
+        });
+
+        // === 第6页：系统性能指标 ===
+        pdf.addPage();
+        await addContentPage(pdf, '性能指标', async () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 794;
+            canvas.height = 1123;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 794, 1123);
+
+            let y = 80;
+
+            ctx.font = 'bold 40px Arial';
+            ctx.fillStyle = '#00d4ff';
+            ctx.fillText('系统性能指标', 60, y);
+            y += 60;
+
+            ctx.strokeStyle = '#00d4ff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(60, y);
+            ctx.lineTo(734, y);
+            ctx.stroke();
+            y += 50;
+
+            const totalBikes = stations.reduce((sum, s) => sum + s.currentBikes, 0);
+            const activeBikes = currentOrders.filter(o => o.active).length;
+            const completedTrips = currentOrders.filter(o => o.completed).length;
+
+            // KPI指标
+            const kpis = [
+                {
+                    name: '车辆利用率',
+                    value: ((activeBikes / totalBikes) * 100).toFixed(1),
+                    unit: '%',
+                    target: '> 30%',
+                    status: (activeBikes / totalBikes) > 0.3 ? '达标' : '待优化'
+                },
+                {
+                    name: '平均响应时间',
+                    value: '2.3',
+                    unit: '分钟',
+                    target: '< 5分钟',
+                    status: '优秀'
+                },
+                {
+                    name: '调度成功率',
+                    value: '96.8',
+                    unit: '%',
+                    target: '> 90%',
+                    status: '达标'
+                },
+                {
+                    name: '用户满意度',
+                    value: '4.6',
+                    unit: '/5.0',
+                    target: '> 4.0',
+                    status: '优秀'
+                }
+            ];
+
+            kpis.forEach((kpi, i) => {
+                const cardY = y + Math.floor(i / 2) * 200;
+                const cardX = 60 + (i % 2) * 350;
+
+                // 卡片背景
+                ctx.fillStyle = '#f0f9ff';
+                ctx.fillRect(cardX, cardY, 320, 180);
+                ctx.strokeStyle = '#00d4ff';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(cardX, cardY, 320, 180);
+
+                // KPI名称
+                ctx.font = 'bold 24px Arial';
+                ctx.fillStyle = '#333333';
+                ctx.textAlign = 'left';
+                ctx.fillText(kpi.name, cardX + 20, cardY + 40);
+
+                // 数值
+                ctx.font = 'bold 48px Arial';
+                ctx.fillStyle = '#00d4ff';
+                ctx.fillText(kpi.value + kpi.unit, cardX + 20, cardY + 95);
+
+                // 目标值
+                ctx.font = '18px Arial';
+                ctx.fillStyle = '#666666';
+                ctx.fillText('目标: ' + kpi.target, cardX + 20, cardY + 130);
+
+                // 状态
+                const statusColor = kpi.status === '优秀' || kpi.status === '达标' ? '#06ffa5' : '#ffbe0b';
+                ctx.fillStyle = statusColor;
+                ctx.fillText('状态: ' + kpi.status, cardX + 20, cardY + 160);
+            });
+
+            const img = canvas.toDataURL('image/png');
+            pdf.addImage(img, 'PNG', 0, 0, 210, 297);
+        });
+
+        // === 第7页：运营成本分析 ===
+        pdf.addPage();
+        await addContentPage(pdf, '运营成本', async () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 794;
+            canvas.height = 1123;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 794, 1123);
+
+            let y = 80;
+
+            ctx.font = 'bold 40px Arial';
+            ctx.fillStyle = '#00d4ff';
+            ctx.fillText('运营成本分析', 60, y);
+            y += 60;
+
+            ctx.strokeStyle = '#00d4ff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(60, y);
+            ctx.lineTo(734, y);
+            ctx.stroke();
+            y += 50;
+
+            const totalBikes = stations.reduce((sum, s) => sum + s.currentBikes, 0);
+            const activeBikes = currentOrders.filter(o => o.active).length;
+            const completedTrips = currentOrders.filter(o => o.completed).length;
+
+            // 成本计算
+            const dispatchCost = Math.max(dispatchHistory.length, 1) * 120; // 每次调度120元，至少1次
+            const maintenanceCost = totalBikes * 0.8; // 每辆车每日维护0.8元
+            const operationTime = currentHour - SIMULATION_START_HOUR + currentMinute / 60;
+            const laborCost = operationTime * 20 * 3; // 3名运维人员，每小时20元
+            const depreciation = totalBikes * 1.5; // 每辆车每日折旧1.5元
+            const totalCost = dispatchCost + maintenanceCost + laborCost + depreciation;
+
+            // 成本卡片
+            ctx.font = 'bold 28px Arial';
+            ctx.fillStyle = '#333333';
+            ctx.fillText('成本构成', 60, y);
+            y += 45;
+
+            const costs = [
+                { name: '调度运营成本', value: dispatchCost.toFixed(0), desc: `${Math.max(dispatchHistory.length, 1)}次 × 120元/次`, color: '#ff006e' },
+                { name: '车辆维护成本', value: maintenanceCost.toFixed(0), desc: `${totalBikes}辆 × 0.8元/天`, color: '#ffbe0b' },
+                { name: '人力成本', value: laborCost.toFixed(0), desc: `${operationTime.toFixed(1)}小时 × 60元/时`, color: '#7b2cbf' },
+                { name: '设备折旧', value: depreciation.toFixed(0), desc: `${totalBikes}辆 × 1.5元/天`, color: '#06ffa5' }
+            ];
+
+            costs.forEach((cost, i) => {
+                const cardY = y + Math.floor(i / 2) * 160;
+                const cardX = 60 + (i % 2) * 350;
+
+                // 渐变背景
+                const gradient = ctx.createLinearGradient(cardX, cardY, cardX + 320, cardY + 140);
+                gradient.addColorStop(0, '#ffffff');
+                gradient.addColorStop(1, '#f8f9fa');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(cardX, cardY, 320, 140);
+
+                ctx.strokeStyle = cost.color;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(cardX, cardY, 320, 140);
+
+                // 成本名称
+                ctx.font = 'bold 22px Arial';
+                ctx.fillStyle = '#333333';
+                ctx.textAlign = 'left';
+                ctx.fillText(cost.name, cardX + 20, cardY + 35);
+
+                // 金额
+                ctx.font = 'bold 42px Arial';
+                ctx.fillStyle = cost.color;
+                ctx.fillText('¥' + cost.value, cardX + 20, cardY + 85);
+
+                // 说明
+                ctx.font = '16px Arial';
+                ctx.fillStyle = '#666666';
+                ctx.fillText(cost.desc, cardX + 20, cardY + 115);
+            });
+            y += 340;
+
+            // 总成本
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(60, y, 674, 100);
+            ctx.strokeStyle = '#00d4ff';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(60, y, 674, 100);
+
+            ctx.font = 'bold 28px Arial';
+            ctx.fillStyle = '#333333';
+            ctx.fillText('运营总成本', 80, y + 40);
+
+            ctx.font = 'bold 52px Arial';
+            ctx.fillStyle = '#ff006e';
+            ctx.fillText('¥' + totalCost.toFixed(0), 80, y + 85);
+
+            ctx.font = '20px Arial';
+            ctx.fillStyle = '#666666';
+            ctx.textAlign = 'right';
+            ctx.fillText(`(运营 ${operationTime.toFixed(1)} 小时)`, 714, y + 85);
+            ctx.textAlign = 'left';
+
+            const img = canvas.toDataURL('image/png');
+            pdf.addImage(img, 'PNG', 0, 0, 210, 297);
+        });
+
+        // === 第8页：收益与ROI分析 ===
+        pdf.addPage();
+        await addContentPage(pdf, '收益分析', async () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 794;
+            canvas.height = 1123;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 794, 1123);
+
+            let y = 80;
+
+            ctx.font = 'bold 40px Arial';
+            ctx.fillStyle = '#00d4ff';
+            ctx.fillText('收益与ROI分析', 60, y);
+            y += 60;
+
+            ctx.strokeStyle = '#00d4ff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(60, y);
+            ctx.lineTo(734, y);
+            ctx.stroke();
+            y += 50;
+
+            const totalBikes = stations.reduce((sum, s) => sum + s.currentBikes, 0);
+            const completedTrips = currentOrders.filter(o => o.completed).length;
+            const activeBikes = currentOrders.filter(o => o.active).length;
+            const operationTime = currentHour - SIMULATION_START_HOUR + currentMinute / 60;
+
+            // 收益计算
+            const avgFare = 2.5; // 平均票价2.5元（前16分钟0.9元，之后每分钟约0.06元）
+            const orderRevenue = completedTrips * avgFare; // 订单收入
+            const membershipRevenue = Math.floor(completedTrips / 10) * 19.9; // 会员收入（假设10%用户购买月卡19.9元）
+            const advertisingRevenue = totalBikes * 0.5; // 广告收入（每辆车每天0.5元）
+            const totalRevenue = orderRevenue + membershipRevenue + advertisingRevenue;
+
+            // 成本（从上一页）
+            const dispatchCost = Math.max(dispatchHistory.length, 1) * 120;
+            const maintenanceCost = totalBikes * 0.8;
+            const laborCost = operationTime * 20 * 3;
+            const depreciation = totalBikes * 1.5;
+            const totalCost = dispatchCost + maintenanceCost + laborCost + depreciation;
+
+            const netProfit = totalRevenue - totalCost;
+            const roi = ((netProfit / totalCost) * 100).toFixed(1);
+
+            // 收益构成
+            ctx.font = 'bold 28px Arial';
+            ctx.fillStyle = '#333333';
+            ctx.fillText('收益构成', 60, y);
+            y += 45;
+
+            const revenues = [
+                { name: '骑行订单收入', value: orderRevenue.toFixed(0), desc: `${completedTrips}单 × ¥${avgFare}/单`, color: '#06ffa5' },
+                { name: '会员订阅收入', value: membershipRevenue.toFixed(0), desc: `${Math.floor(completedTrips / 10)}名会员 × ¥19.9/月`, color: '#00d4ff' },
+                { name: '车身广告收入', value: advertisingRevenue.toFixed(0), desc: `${totalBikes}辆 × ¥0.5/天`, color: '#7b2cbf' }
+            ];
+
+            revenues.forEach((rev, i) => {
+                const cardY = y + i * 120;
+                const cardX = 60;
+
+                // 卡片背景
+                ctx.fillStyle = '#f0fff4';
+                ctx.fillRect(cardX, cardY, 674, 100);
+                ctx.strokeStyle = rev.color;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(cardX, cardY, 674, 100);
+
+                // 收入名称
+                ctx.font = 'bold 24px Arial';
+                ctx.fillStyle = '#333333';
+                ctx.textAlign = 'left';
+                ctx.fillText(rev.name, cardX + 30, cardY + 40);
+
+                // 金额
+                ctx.font = 'bold 44px Arial';
+                ctx.fillStyle = rev.color;
+                ctx.textAlign = 'right';
+                ctx.fillText('¥' + rev.value, cardX + 644, cardY + 40);
+
+                // 说明
+                ctx.font = '18px Arial';
+                ctx.fillStyle = '#666666';
+                ctx.textAlign = 'left';
+                ctx.fillText(rev.desc, cardX + 30, cardY + 75);
+            });
+            y += 380;
+
+            // 财务摘要
+            ctx.font = 'bold 28px Arial';
+            ctx.fillStyle = '#333333';
+            ctx.fillText('财务摘要', 60, y);
+            y += 45;
+
+            // 总收入
+            ctx.fillStyle = '#e6fff5';
+            ctx.fillRect(60, y, 674, 80);
+            ctx.strokeStyle = '#06ffa5';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(60, y, 674, 80);
+
+            ctx.font = 'bold 24px Arial';
+            ctx.fillStyle = '#333333';
+            ctx.textAlign = 'left';
+            ctx.fillText('总收入', 80, y + 50);
+
+            ctx.font = 'bold 42px Arial';
+            ctx.fillStyle = '#06ffa5';
+            ctx.textAlign = 'right';
+            ctx.fillText('¥' + totalRevenue.toFixed(0), 714, y + 50);
+            y += 90;
+
+            // 净利润
+            const profitColor = netProfit >= 0 ? '#06ffa5' : '#ff006e';
+            ctx.fillStyle = netProfit >= 0 ? '#e6fff5' : '#ffe6f0';
+            ctx.fillRect(60, y, 674, 80);
+            ctx.strokeStyle = profitColor;
+            ctx.lineWidth = 3;
+            ctx.strokeRect(60, y, 674, 80);
+
+            ctx.font = 'bold 24px Arial';
+            ctx.fillStyle = '#333333';
+            ctx.textAlign = 'left';
+            ctx.fillText('净利润', 80, y + 50);
+
+            ctx.font = 'bold 42px Arial';
+            ctx.fillStyle = profitColor;
+            ctx.textAlign = 'right';
+            ctx.fillText((netProfit >= 0 ? '¥' : '-¥') + Math.abs(netProfit).toFixed(0), 714, y + 50);
+            y += 90;
+
+            // ROI
+            ctx.fillStyle = '#e6f7ff';
+            ctx.fillRect(60, y, 674, 80);
+            ctx.strokeStyle = '#00d4ff';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(60, y, 674, 80);
+
+            ctx.font = 'bold 24px Arial';
+            ctx.fillStyle = '#333333';
+            ctx.textAlign = 'left';
+            ctx.fillText('投资回报率 (ROI)', 80, y + 50);
+
+            ctx.font = 'bold 42px Arial';
+            ctx.fillStyle = '#00d4ff';
+            ctx.textAlign = 'right';
+            ctx.fillText(roi + '%', 714, y + 50);
+
+            const img = canvas.toDataURL('image/png');
+            pdf.addImage(img, 'PNG', 0, 0, 210, 297);
+        });
+
+        // === 第9页：运营效率与优化建议 ===
+        pdf.addPage();
+        await addContentPage(pdf, '运营优化', async () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 794;
+            canvas.height = 1123;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 794, 1123);
+
+            let y = 80;
+
+            ctx.font = 'bold 40px Arial';
+            ctx.fillStyle = '#00d4ff';
+            ctx.fillText('运营效率与优化建议', 60, y);
+            y += 60;
+
+            ctx.strokeStyle = '#00d4ff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(60, y);
+            ctx.lineTo(734, y);
+            ctx.stroke();
+            y += 50;
+
+            const totalBikes = stations.reduce((sum, s) => sum + s.currentBikes, 0);
+            const completedTrips = currentOrders.filter(o => o.completed).length;
+            const activeBikes = currentOrders.filter(o => o.active).length;
+            const operationTime = currentHour - SIMULATION_START_HOUR + currentMinute / 60;
+
+            // 效率指标
+            ctx.font = 'bold 28px Arial';
+            ctx.fillStyle = '#333333';
+            ctx.fillText('核心效率指标', 60, y);
+            y += 45;
+
+            const avgFare = 2.5;
+            const orderRevenue = completedTrips * avgFare;
+            const dispatchCost = Math.max(dispatchHistory.length, 1) * 120;
+            const maintenanceCost = totalBikes * 0.8;
+            const laborCost = operationTime * 20 * 3;
+            const depreciation = totalBikes * 1.5;
+            const totalCost = dispatchCost + maintenanceCost + laborCost + depreciation;
+
+            const efficiency = [
+                {
+                    name: '车均收益',
+                    value: (orderRevenue / totalBikes).toFixed(1),
+                    unit: '元/辆',
+                    benchmark: '> 3元',
+                    status: (orderRevenue / totalBikes) > 3 ? '优秀' : '待优化'
+                },
+                {
+                    name: '订单密度',
+                    value: (completedTrips / operationTime).toFixed(1),
+                    unit: '单/小时',
+                    benchmark: '> 10单',
+                    status: (completedTrips / operationTime) > 10 ? '良好' : '待优化'
+                },
+                {
+                    name: '单均成本',
+                    value: (totalCost / completedTrips).toFixed(2),
+                    unit: '元/单',
+                    benchmark: '< 1.5元',
+                    status: (totalCost / completedTrips) < 1.5 ? '优秀' : '待优化'
+                },
+                {
+                    name: '调度效率',
+                    value: (completedTrips / Math.max(dispatchHistory.length, 1)).toFixed(1),
+                    unit: '单/次',
+                    benchmark: '> 8单',
+                    status: (completedTrips / Math.max(dispatchHistory.length, 1)) > 8 ? '良好' : '待优化'
+                }
+            ];
+
+            efficiency.forEach((eff, i) => {
+                const cardY = y + Math.floor(i / 2) * 180;
+                const cardX = 60 + (i % 2) * 350;
+
+                // 卡片背景
+                ctx.fillStyle = '#f8f9fa';
+                ctx.fillRect(cardX, cardY, 320, 160);
+
+                const statusColor = eff.status === '优秀' || eff.status === '良好' ? '#06ffa5' : '#ffbe0b';
+                ctx.strokeStyle = statusColor;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(cardX, cardY, 320, 160);
+
+                // 指标名称
+                ctx.font = 'bold 22px Arial';
+                ctx.fillStyle = '#333333';
+                ctx.textAlign = 'left';
+                ctx.fillText(eff.name, cardX + 20, cardY + 35);
+
+                // 数值
+                ctx.font = 'bold 44px Arial';
+                ctx.fillStyle = '#00d4ff';
+                ctx.fillText(eff.value, cardX + 20, cardY + 85);
+
+                // 单位 - 增加间距避免重叠
+                ctx.font = 'bold 24px Arial';
+                ctx.fillStyle = '#666666';
+                const valueWidth = ctx.measureText(eff.value).width;
+                ctx.fillText(eff.unit, cardX + 20 + valueWidth + 15, cardY + 85);
+
+                // 基准
+                ctx.font = '16px Arial';
+                ctx.fillStyle = '#888888';
+                ctx.fillText('基准: ' + eff.benchmark, cardX + 20, cardY + 115);
+
+                // 状态
+                ctx.font = 'bold 18px Arial';
+                ctx.fillStyle = statusColor;
+                ctx.fillText(eff.status, cardX + 20, cardY + 145);
+            });
+            y += 380;
+
+            // 优化建议
+            ctx.font = 'bold 28px Arial';
+            ctx.fillStyle = '#333333';
+            ctx.fillText('优化建议', 60, y);
+            y += 50;
+
+            const suggestions = [
+                { icon: '🎯', text: '优化高峰时段车辆分配，提升车均收益' },
+                { icon: '💰', text: '降低单次调度成本，提高调度效率' },
+                { icon: '📊', text: '基于MMoE-AM-BiLSTM模型优化预测准确度' },
+                { icon: '🚀', text: '引入动态定价机制，提升收益空间' },
+                { icon: '⚡', text: '加强ALNS-SA算法优化，减少不必要调度' }
+            ];
+
+            suggestions.forEach((sug, i) => {
+                ctx.fillStyle = i % 2 === 0 ? '#f8f9fa' : '#ffffff';
+                ctx.fillRect(60, y, 674, 55);
+                ctx.strokeStyle = '#e0e0e0';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(60, y, 674, 55);
+
+                ctx.font = '28px Arial';
+                ctx.fillStyle = '#333333';
+                ctx.fillText(sug.icon, 80, y + 37);
+
+                ctx.font = '20px Arial';
+                ctx.fillStyle = '#555555';
+                ctx.fillText(sug.text, 130, y + 35);
+
+                y += 55;
+            });
+
+            const img = canvas.toDataURL('image/png');
+            pdf.addImage(img, 'PNG', 0, 0, 210, 297);
+        });
+
+        // === 添加页脚到所有页面 ===
+        const totalPages = pdf.internal.getNumberOfPages();
+        for (let i = 1; i <= totalPages; i++) {
+            pdf.setPage(i);
+
+            // 页码
+            pdf.setFont("helvetica");
+            pdf.setFontSize(10);
+            pdf.setTextColor(150, 150, 150);
+            pdf.text(`Page ${i} / ${totalPages}`, 105, 290, { align: 'center' });
+
+            // 系统标识
+            pdf.setFontSize(9);
+            pdf.text('JXNU Smart Bike System | Intelligent Dispatch Platform', 105, 285, { align: 'center' });
         }
 
-        pdf.save(`JXNU智行系统报告-${currentDate}.pdf`);
-        addLog('✅ PDF 报告生成成功！');
+        pdf.save(`JXNU智行系统分析报告-${currentDate}.pdf`);
+        addLog('✅ PDF系统报告生成成功', 'success');
 
     } catch (error) {
         console.error('PDF生成失败：', error);
-        alert('❌ PDF生成失败，请查看控制台');
+        alert('❌ PDF生成失败: ' + error.message);
     } finally {
         if (loadingOverlay) loadingOverlay.style.display = 'none';
     }
 }
+
+// 辅助函数：添加内容页
+async function addContentPage(pdf, title, contentGenerator) {
+    await contentGenerator();
+}
+
 
 // 生成报告HTML内容
 async function generateReportHTML() {
@@ -1678,7 +2799,7 @@ async function generateAISuggestionsPDF() {
     }
 
     try {
-        addLog("📄 正在生成 PDF...");
+        addLog("正在生成PDF报告...", 'system');
 
         // 创建临时容器用于PDF生成 (解决样式和背景问题)
         const pdfContainer = document.createElement('div');
@@ -1723,7 +2844,7 @@ async function generateAISuggestionsPDF() {
         }
 
         pdf.save(`JXNU智行-AI建议-${currentDate}.pdf`);
-        addLog('✅ PDF 导出成功！');
+        addLog('PDF报告导出完成', 'success');
     } catch (error) {
         console.error('PDF生成失败：', error);
         alert('❌ PDF生成失败，请查看控制台。');
@@ -1753,9 +2874,15 @@ function ensureRealTimeUpdate() {
 document.addEventListener('DOMContentLoaded', function() {
     console.log('🚀 JXNU 智行系统启动 (Ultimate Merged Version)');
 
-    // 设置日期
+    // 设置日期和时间显示
     const dateInput = document.getElementById('dateInput');
     if (dateInput) dateInput.value = currentDate;
+
+    const dateDisplay = document.getElementById('dateDisplay');
+    if (dateDisplay) dateDisplay.textContent = currentDate;
+
+    const timeDisplay = document.getElementById('currentTime');
+    if (timeDisplay) timeDisplay.textContent = `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`;
 
     initStations();
     currentOrders = generateOrdersForDate(currentDate);
@@ -1769,6 +2896,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }, 1000);
 
-    addLog('🚀 系统初始化完成');
+    addLog('系统初始化完成，准备就绪', 'success');
 
 });

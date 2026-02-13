@@ -6,11 +6,11 @@
     <title>JXNU 智行 | 共享单车智能调度仿真系统</title>
 
     <!-- 外部库 -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://cdn.bootcdn.net/ajax/libs/leaflet/1.9.4/leaflet.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
-    <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+   <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 
@@ -759,6 +759,187 @@
     </style>
 </head>
 <body>
+    <!-- 封面页 -->
+    <div id="coverPage" style="position: fixed; top: 0; left: 0; width: 100%; height: 100vh; z-index: 10000;
+         background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 50%, #2d1b4e 100%);
+         display: flex; flex-direction: column; align-items: center; justify-content: center;
+         transition: opacity 0.8s, transform 0.8s;">
+
+        <!-- 粒子背景 -->
+        <canvas id="coverCanvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></canvas>
+
+        <!-- 内容 -->
+        <div style="position: relative; z-index: 1; text-align: center; animation: fadeInUp 1s ease-out;">
+            <!-- Logo -->
+            <div style="margin-bottom: 30px; animation: pulse 2s ease-in-out infinite;">
+                <div style="width: 120px; height: 120px; margin: 0 auto;
+                     background: linear-gradient(135deg, var(--primary), var(--accent));
+                     border-radius: 30px; display: flex; align-items: center; justify-content: center;
+                     box-shadow: 0 20px 60px rgba(0, 212, 255, 0.4);">
+                    <span style="font-size: 60px;">🚲</span>
+                </div>
+            </div>
+
+            <!-- 标题 -->
+            <h1 style="font-family: 'Orbitron', sans-serif; font-size: 56px; font-weight: 900;
+                 background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+                 -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+                 margin-bottom: 20px; text-shadow: 0 0 40px rgba(0, 212, 255, 0.6);">
+                JXNU 智行
+            </h1>
+
+            <!-- 副标题 -->
+            <p style="font-size: 20px; color: rgba(255, 255, 255, 0.8); margin-bottom: 15px; letter-spacing: 2px;">
+                共享单车智能调度仿真系统
+            </p>
+
+            <p style="font-size: 14px; color: rgba(255, 255, 255, 0.5); margin-bottom: 50px;">
+                基于MMoE-AM-BiLSTM时空需求预测与ALNS-SA动态调度算法
+            </p>
+
+            <!-- 进入按钮 -->
+            <button onclick="enterSystem()" style="padding: 18px 50px; font-size: 18px; font-weight: 700;
+                     background: linear-gradient(135deg, var(--primary), var(--accent));
+                     border: none; border-radius: 50px; color: white; cursor: pointer;
+                     box-shadow: 0 10px 30px rgba(0, 212, 255, 0.4);
+                     transition: all 0.3s; text-transform: uppercase; letter-spacing: 2px;
+                     animation: buttonPulse 2s ease-in-out infinite;">
+                进入系统
+            </button>
+
+            <!-- 特性标签 -->
+            <div style="margin-top: 60px; display: flex; gap: 30px; justify-content: center; flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 24px;">🎯</span>
+                    <span style="color: rgba(255, 255, 255, 0.7); font-size: 14px;">实时监控</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 24px;">🚚</span>
+                    <span style="color: rgba(255, 255, 255, 0.7); font-size: 14px;">智能调度</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 24px;">📊</span>
+                    <span style="color: rgba(255, 255, 255, 0.7); font-size: 14px;">数据分析</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 24px;">🤖</span>
+                    <span style="color: rgba(255, 255, 255, 0.7); font-size: 14px;">AI预测</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 版本信息 -->
+        <div style="position: absolute; bottom: 30px; color: rgba(255, 255, 255, 0.3); font-size: 12px;">
+            Version 2.0 | Powered by JXNU Team
+        </div>
+    </div>
+
+    <style>
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes buttonPulse {
+            0%, 100% {
+                box-shadow: 0 10px 30px rgba(0, 212, 255, 0.4);
+                transform: scale(1);
+            }
+            50% {
+                box-shadow: 0 15px 40px rgba(0, 212, 255, 0.6);
+                transform: scale(1.05);
+            }
+        }
+
+        button:hover {
+            transform: translateY(-3px) scale(1.05) !important;
+            box-shadow: 0 15px 40px rgba(0, 212, 255, 0.8) !important;
+        }
+    </style>
+
+    <script>
+        // 封面粒子动画
+        (function() {
+            const canvas = document.getElementById('coverCanvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+
+            const particles = [];
+            const particleCount = 80;
+
+            for (let i = 0; i < particleCount; i++) {
+                particles.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    vx: (Math.random() - 0.5) * 0.5,
+                    vy: (Math.random() - 0.5) * 0.5,
+                    radius: Math.random() * 2 + 1
+                });
+            }
+
+            function animate() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                particles.forEach((p, i) => {
+                    p.x += p.vx;
+                    p.y += p.vy;
+
+                    if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+                    if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(0, 212, 255, 0.6)';
+                    ctx.fill();
+
+                    // 连线
+                    for (let j = i + 1; j < particles.length; j++) {
+                        const p2 = particles[j];
+                        const dx = p.x - p2.x;
+                        const dy = p.y - p2.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+
+                        if (dist < 120) {
+                            ctx.beginPath();
+                            ctx.moveTo(p.x, p.y);
+                            ctx.lineTo(p2.x, p2.y);
+                            ctx.strokeStyle = `rgba(0, 212, 255, ${0.2 * (1 - dist / 120)})`;
+                            ctx.lineWidth = 1;
+                            ctx.stroke();
+                        }
+                    }
+                });
+
+                requestAnimationFrame(animate);
+            }
+
+            animate();
+
+            window.addEventListener('resize', () => {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            });
+        })();
+
+        // 进入系统
+        function enterSystem() {
+            const cover = document.getElementById('coverPage');
+            cover.style.opacity = '0';
+            cover.style.transform = 'scale(1.1)';
+            setTimeout(() => {
+                cover.style.display = 'none';
+            }, 800);
+        }
+    </script>
+
     <!-- 动态背景粒子 -->
     <div class="particles" id="particles"></div>
 
@@ -771,10 +952,23 @@
             </div>
         </div>
 
+        <!-- 固定时间显示条 -->
+        <div style="position: sticky; top: 0; z-index: 999; background: rgba(10, 14, 39, 0.95);
+             backdrop-filter: blur(10px); padding: 15px 0; border-bottom: 2px solid var(--primary);
+             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);">
+            <div style="max-width: 1920px; margin: 0 auto; padding: 0 20px; display: flex; justify-content: center; align-items: center; gap: 30px;">
+                <div style="font-size: 14px; color: rgba(255,255,255,0.7);">当前仿真时间</div>
+                <div class="time-display" id="currentTime" style="font-size: 48px; min-width: 160px;">07:00</div>
+                <div style="font-size: 14px; color: rgba(255,255,255,0.5);">
+                    <span id="dateDisplay">2026-02-12</span>
+                </div>
+            </div>
+        </div>
+
         <!-- 标题栏 -->
         <div class="header">
             <div class="header-content">
-                <div>
+                <div style="flex: 1;">
                     <h1>
                         <span>🚲</span>
                         <span>JXNU 智行</span>
@@ -783,6 +977,7 @@
                         共享单车智能调度仿真系统 · 基于MMoE-AM-BiLSTM时空需求预测与ALNS-SA动态调度算法
                     </div>
                 </div>
+
                 <div class="header-actions">
                     <div class="date-selector">
                         <label>📅 选择日期</label>
@@ -801,7 +996,6 @@
         <!-- 控制面板 -->
         <div class="control-panel">
             <div class="time-controls">
-                <div class="time-display" id="currentTime">07:00</div>
                 <button class="btn btn-primary" id="playBtn" onclick="togglePlay()">
                     <span>▶ 开始仿真</span>
                 </button>
@@ -893,8 +1087,18 @@
                     <div class="side-panel">
                         <h3 class="panel-title">📢 实时监控日志</h3>
                         <div id="liveLogs" class="log-container">
-                            <div class="log-item">[07:00] 系统初始化完成...</div>
-                            <div class="log-item">[07:00] MMoE-AM-BiLSTM预测模型已加载</div>
+                            <div class="log-item" style="border-left-color: #06ffa5;">
+                                <span style="margin-right: 5px;">✅</span>
+                                [07:00] 系统初始化完成，准备就绪
+                            </div>
+                            <div class="log-item" style="border-left-color: #888;">
+                                <span style="margin-right: 5px;">⚙️</span>
+                                [07:00] MMoE-AM-BiLSTM预测模型已加载
+                            </div>
+                            <div class="log-item" style="border-left-color: #888;">
+                                <span style="margin-right: 5px;">⚙️</span>
+                                [07:00] ALNS-SA智能调度算法就绪
+                            </div>
                         </div>
                     </div>
                 </div>
