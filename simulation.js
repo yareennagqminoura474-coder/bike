@@ -7,7 +7,7 @@
 const TOTAL_STATIONS = 11;
 const TOTAL_INIT_BIKES = 200;
 const SIMULATION_START_HOUR = 7;
-const SIMULATION_END_HOUR = 22;
+const SIMULATION_END_HOUR = 23;
 
 let currentHour = SIMULATION_START_HOUR;
 let currentMinute = 0;
@@ -1968,16 +1968,18 @@ async function generatePDFReport() {
             ctx.font = '22px Arial';
             ctx.fillStyle = '#555555';
             const peakInfo = [
-                '早高峰 (7:00-9:00): 北区宿舍 → 教学楼',
-                '午间 (12:00-14:00): 教学楼 → 食堂',
-                '晚高峰 (17:00-19:00): 教学楼 → 食堂/宿舍',
-                '晚间 (18:00-22:00): 校内 → 青蓝门'
+                '早高峰 (7:40-8:00): 宿舍区域 → 教学楼',
+                '午间 (12:00-13:00): 教学楼 → 食堂',
+                '午高峰(13:30-14:00): 宿舍区域 → 教学楼',
+                '晚高峰 (17:00-17:30): 教学楼 → 食堂/宿舍',
+                '晚间 (18:00-19:00): 校内 → 青蓝门',
+                '返回高峰 (20:00-21:00): 青蓝门 → 宿舍区域',
             ];
 
             peakInfo.forEach((info, i) => {
                 ctx.fillText(`• ${info}`, 80, y + i * 40);
             });
-            y += 180;
+            y += 280;
 
             // 热点站点
             ctx.font = 'bold 28px Arial';
@@ -2516,28 +2518,28 @@ async function generatePDFReport() {
                 {
                     name: '车均收益',
                     value: (orderRevenue / totalBikes).toFixed(1),
-                    unit: '元/辆',
+                    unit: '            元/辆',
                     benchmark: '> 3元',
                     status: (orderRevenue / totalBikes) > 3 ? '优秀' : '待优化'
                 },
                 {
                     name: '订单密度',
                     value: (completedTrips / operationTime).toFixed(1),
-                    unit: '单/小时',
+                    unit: '            单/小时',
                     benchmark: '> 10单',
                     status: (completedTrips / operationTime) > 10 ? '良好' : '待优化'
                 },
                 {
                     name: '单均成本',
                     value: (totalCost / completedTrips).toFixed(2),
-                    unit: '元/单',
+                    unit: '            元/单',
                     benchmark: '< 1.5元',
                     status: (totalCost / completedTrips) < 1.5 ? '优秀' : '待优化'
                 },
                 {
                     name: '调度效率',
                     value: (completedTrips / Math.max(dispatchHistory.length, 1)).toFixed(1),
-                    unit: '单/次',
+                    unit: '            单/次',
                     benchmark: '> 8单',
                     status: (completedTrips / Math.max(dispatchHistory.length, 1)) > 8 ? '良好' : '待优化'
                 }
