@@ -4,6 +4,26 @@
 // ============================================================================
 
 // ========== 第1部分：全局变量与常量 ==========
+// WGS84 转 GCJ-02 (火星坐标)
+function wgs2gcj(lng, lat) {
+    const PI = 3.1415926535897932384626, a = 6378245.0, ee = 0.00669342162296594323;
+    let dLat = -100.0 + 2.0*(lng-105.0) + 3.0*(lat-35.0) + 0.2*(lat-35.0)*(lat-35.0) + 0.1*(lng-105.0)*(lat-35.0) + 0.2*Math.sqrt(Math.abs(lng-105.0));
+    dLat += (20.0*Math.sin(6.0*(lng-105.0)*PI) + 20.0*Math.sin(2.0*(lng-105.0)*PI)) * 2.0/3.0;
+    dLat += (20.0*Math.sin((lat-35.0)*PI) + 40.0*Math.sin((lat-35.0)/3.0*PI)) * 2.0/3.0;
+    dLat += (160.0*Math.sin((lat-35.0)/12.0*PI) + 320*Math.sin((lat-35.0)*PI/30.0)) * 2.0/3.0;
+    let dLng = 300.0 + (lng-105.0) + 2.0*(lat-35.0) + 0.1*(lng-105.0)*(lng-105.0) + 0.1*(lng-105.0)*(lat-35.0) + 0.1*Math.sqrt(Math.abs(lng-105.0));
+    dLng += (20.0*Math.sin(6.0*(lng-105.0)*PI) + 20.0*Math.sin(2.0*(lng-105.0)*PI)) * 2.0/3.0;
+    dLng += (20.0*Math.sin((lng-105.0)*PI) + 40.0*Math.sin((lng-105.0)/3.0*PI)) * 2.0/3.0;
+    dLng += (150.0*Math.sin((lng-105.0)/12.0*PI) + 300.0*Math.sin((lng-105.0)/30.0*PI)) * 2.0/3.0;
+    let radLat = lat / 180.0 * PI;
+    let magic = Math.sin(radLat);
+    magic = 1 - ee * magic * magic;
+    let sqrtMagic = Math.sqrt(magic);
+    dLat = (dLat * 180.0) / ((a * (1 - ee)) / (magic * sqrtMagic) * PI);
+    dLng = (dLng * 180.0) / (a / sqrtMagic * Math.cos(radLat) * PI);
+    return [lat + dLat, lng + dLng]; // 返回 Leaflet 专用的 [lat, lng] 格式
+}
+
 const TOTAL_STATIONS = 11;
 const TOTAL_INIT_BIKES = 200;
 const SIMULATION_START_HOUR = 7;
@@ -64,11 +84,12 @@ function initStations() {
 
     stations = [];
     stationData.forEach(data => {
+        const [gcjLat, gcjLng] = wgs2gcj(data.lng, data.lat); // 转换坐标
         stations.push({
             id: data.id,
             name: data.name,
-            lat: data.lat,
-            lng: data.lng,
+            lat: gcjLat,
+            lng: gcjLng,
             currentBikes: data.init,
             initialBikes: data.init,
             status: 'normal',
@@ -302,14 +323,14 @@ function switchTab(tabName) {
 // ========== 第7部分：地图初始化 ==========
 function initMap() {
     map = L.map('map', {
-        center: [28.6841, 116.0350],
+        center: wgs2gcj(116.0350, 28.6841),
         zoom: 16,
         zoomControl: true
     });
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
+    L.tileLayer('https://webrd02.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+    attribution: '© 高德地图'
+}).addTo(map);
 
     updateMapMarkers();
 }
@@ -690,19 +711,35 @@ function onTimeSliderChange(value) {
     currentOrders.forEach(o => { o.completed = false; o.active = false; o.status='pending'; });
 
     const targetTime = currentHour * 60 + currentMinute;
-    currentOrders.forEach(order => {
+
+    // 按时间顺序处理订单，确保逻辑一致
+    const sortedOrders = [...currentOrders].sort((a, b) => {
+        const aStart = a.startHour * 60 + a.startMinute;
+        const bStart = b.startHour * 60 + b.startMinute;
+        return aStart - bStart;
+    });
+
+    sortedOrders.forEach(order => {
         const oStart = order.startHour * 60 + order.startMinute;
         const oEnd = oStart + order.duration;
 
         if (targetTime >= oEnd) {
-             if (stations[order.from].currentBikes > 0) stations[order.from].currentBikes--;
-             if (stations[order.to]) stations[order.to].currentBikes++; // 移除capacity限制
-             order.completed = true;
-             order.status = 'completed';
+            // 订单已完成：先取车，再还车
+            if (stations[order.from] && stations[order.from].currentBikes > 0) {
+                stations[order.from].currentBikes--;
+                if (stations[order.to]) {
+                    stations[order.to].currentBikes++;
+                }
+                order.completed = true;
+                order.status = 'completed';
+            }
         } else if (targetTime >= oStart) {
-             if (stations[order.from].currentBikes > 0) stations[order.from].currentBikes--;
-             order.active = true;
-             order.status = 'active';
+            // 订单进行中：只取车
+            if (stations[order.from] && stations[order.from].currentBikes > 0) {
+                stations[order.from].currentBikes--;
+                order.active = true;
+                order.status = 'active';
+            }
         }
     });
 
@@ -1057,10 +1094,10 @@ function renderDispatchTab() {
     setTimeout(() => {
         // 初始化调度地图
         if (!window.dispatchMapInstance) {
-            window.dispatchMapInstance = L.map('dispatchMap').setView([28.6841, 116.0350], 15);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap contributors'
-            }).addTo(window.dispatchMapInstance);
+            window.dispatchMapInstance = L.map('dispatchMap').setView(wgs2gcj(116.0350, 28.6841), 15);
+           L.tileLayer('https://webrd02.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+    attribution: '© 高德地图'
+}).addTo(window.dispatchMapInstance);
         }
 
         updateDispatchView();
@@ -1235,10 +1272,10 @@ function renderHeatmapTab() {
     // 初始化热力地图
     if(heatmapMapInstance) heatmapMapInstance.remove();
 
-    heatmapMapInstance = L.map('heatmap-map').setView([28.6841, 116.0350], 15); // 瑶湖校区中心
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-    }).addTo(heatmapMapInstance);
+    heatmapMapInstance = L.map('heatmap-map').setView(wgs2gcj(116.0350, 28.6841), 15); // 瑶湖校区中心
+    L.tileLayer('https://webrd02.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+    attribution: '© 高德地图'
+}).addTo(heatmapMapInstance);
 
     updateHeatmapView();
 }
