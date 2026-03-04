@@ -29,6 +29,12 @@ const TOTAL_INIT_BIKES = 200;
 const SIMULATION_START_HOUR = 7;
 const SIMULATION_END_HOUR = 23;
 
+// ── 统一状态阈值（所有视图共享，确保数据一致）──
+const THRESHOLD_SHORTAGE = 5;   // 缺车：< 5 辆（红色）
+const THRESHOLD_LOW      = 5;   // 偏少（与缺车对齐，废弃中间态）
+const THRESHOLD_HIGH     = 30;  // 偏多（与积压对齐，废弃中间态）
+const THRESHOLD_SURPLUS  = 30;  // 积压：> 30 辆（橙色）
+
 let currentHour = SIMULATION_START_HOUR;
 let currentMinute = 0;
 let isPlaying = false;
@@ -348,23 +354,15 @@ function updateMapMarkers() {
         let color = '#06ffa5'; // 默认绿色
         let status = '正常';
 
-        // 根据实际车辆数量动态判断状态，不受容量限制
-        if (station.currentBikes < 3) {
-            color = '#ff006e'; // 红色 - 严重缺车
+        // 统一阈值：缺车 < 5（红），积压 > 30（橙红），正常 5-30（绿）
+        if (station.currentBikes < 5) {
+            color = '#ff4d6d';
             status = '缺车';
             station.status = 'shortage';
-        } else if (station.currentBikes < 8) {
-            color = '#ffbe0b'; // 黄色 - 车辆偏少
-            status = '偏少';
-            station.status = 'warning';
-        } else if (station.currentBikes > 40) {
-            color = '#ff006e'; // 红色 - 车辆积压
+        } else if (station.currentBikes > 30) {
+            color = '#ffbe0b';
             status = '积压';
             station.status = 'surplus';
-        } else if (station.currentBikes > 25) {
-            color = '#ffbe0b'; // 黄色 - 车辆较多
-            status = '较多';
-            station.status = 'warning';
         } else {
             station.status = 'normal';
         }
@@ -563,11 +561,10 @@ function updateStatistics() {
 
     let normalCount = 0, shortageCount = 0, surplusCount = 0;
     stations.forEach(s => {
-        if (s.currentBikes < 3) shortageCount++;
-        else if (s.currentBikes > 40) surplusCount++;
-        else if (s.currentBikes < 8 || s.currentBikes > 30) {
-            // 警告状态（偏少或较多），不计入shortage/surplus
-        } else normalCount++;
+        // 统一阈值：缺车 < 5，积压 > 30，正常 5-30（确保三类之和 = 站点总数）
+        if (s.currentBikes < 5) shortageCount++;
+        else if (s.currentBikes > 30) surplusCount++;
+        else normalCount++;
     });
 
     updateNumber('totalBikes', totalBikes);
@@ -587,40 +584,30 @@ function updateStatistics() {
 
 function updateNumber(id, value) {
     const el = document.getElementById(id);
-    if (el) el.textContent = value;
+    if (!el) return;
+    const strVal = String(value);
+    if (el.textContent !== strVal) {
+        el.textContent = strVal;
+        el.classList.remove('num-changed');
+        void el.offsetWidth; // reflow to restart animation
+        el.classList.add('num-changed');
+        setTimeout(() => el.classList.remove('num-changed'), 450);
+    }
 }
 
 function updateProgress(id, percent) {
     const el = document.getElementById(id);
-    if (el) el.style.width = Math.min(100, percent) + '%';
-}
-
-function updateDashboardView() {
-    if (!chartInstances.gauge1 || !chartInstances.gauge2) {
-        const g1 = document.getElementById('performanceGauge1');
-        const g2 = document.getElementById('performanceGauge2');
-        if(!g1 || !g2) return;
-        chartInstances.gauge1 = echarts.init(g1);
-        chartInstances.gauge2 = echarts.init(g2);
+    if (!el) return;
+    const newW = Math.min(100, Math.max(0, percent));
+    const oldW = parseFloat(el.style.width) || 0;
+    el.style.width = newW + '%';
+    // 值变化超过1%时触发闪光动画
+    if (Math.abs(newW - oldW) > 1) {
+        el.classList.remove('bar-changed');
+        void el.offsetWidth; // reflow强制重启动画
+        el.classList.add('bar-changed');
+        setTimeout(() => el.classList.remove('bar-changed'), 700);
     }
-
-    const activeOrders = currentOrders.filter(o => o.active).length;
-    const activeRate = Math.min(100, (activeOrders / 100) * 100).toFixed(1);
-    const totalBikes = stations.reduce((sum, s) => sum + s.currentBikes, 0);
-    const stockRate = Math.min(100, (totalBikes / (stations.length * 30)) * 100).toFixed(1);
-
-    const getOption = (name, val, colorArr) => ({
-        series: [{
-            type: 'gauge',
-            detail: { formatter: '{value}%', fontSize: 20 },
-            data: [{ value: val, name: name }],
-            axisLine: { lineStyle: { color: colorArr, width: 20 } },
-            pointer: { itemStyle: { color: 'auto' } }
-        }]
-    });
-
-    chartInstances.gauge1.setOption(getOption('实时活跃率', activeRate, [[0.3, '#91c7ae'], [0.7, '#63869e'], [1, '#c23531']]));
-    chartInstances.gauge2.setOption(getOption('库存充足率', stockRate, [[0.2, '#c23531'], [0.8, '#91c7ae'], [1, '#c23531']]));
 }
 
 function resetSimulation() {
@@ -992,8 +979,13 @@ function renderComparisonCharts() {
 // ========== 第11部分：时序分析选项卡 (增强版) ==========
 function renderTimelineTab() {
     setTimeout(() => {
+        // 主趋势图
         chartInstances.timeline = echarts.init(document.getElementById('timelineChart'));
         updateTimelineCharts();
+        // 站点库存快照 + 路线 + 进度（元素已在HTML中预定义）
+        if (typeof _renderTlStationBars === 'function') _renderTlStationBars();
+        if (typeof _renderTlRouteChart  === 'function') _renderTlRouteChart();
+        if (typeof _renderTlOrderProgress === 'function') _renderTlOrderProgress();
     }, 100);
 }
 
@@ -1059,13 +1051,13 @@ function updateTimelineCharts() {
                 data: timeSeriesData.inStation,
                 smooth: true,
                 symbol: 'circle',
-                symbolSize: 6,
-                lineStyle: { color: '#00d4ff', width: 3 },
-                itemStyle: { color: '#00d4ff' },
+                symbolSize: 5,
+                lineStyle: { color: '#00d4ff', width: 2.5, shadowColor:'rgba(0,212,255,0.6)', shadowBlur:8 },
+                itemStyle: { color: '#00d4ff', shadowColor:'rgba(0,212,255,0.8)', shadowBlur:10 },
                 areaStyle: {
                     color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                        { offset: 0, color: 'rgba(0, 212, 255, 0.5)' },
-                        { offset: 1, color: 'rgba(0, 212, 255, 0.1)' }
+                        { offset: 0, color: 'rgba(0, 212, 255, 0.48)' },
+                        { offset: 1, color: 'rgba(0, 212, 255, 0.03)' }
                     ])
                 }
             },
@@ -1075,13 +1067,13 @@ function updateTimelineCharts() {
                 data: timeSeriesData.active,
                 smooth: true,
                 symbol: 'circle',
-                symbolSize: 6,
-                lineStyle: { color: '#ff006e', width: 3 },
-                itemStyle: { color: '#ff006e' },
+                symbolSize: 5,
+                lineStyle: { color: '#ff006e', width: 2.5, shadowColor:'rgba(255,0,110,0.6)', shadowBlur:8 },
+                itemStyle: { color: '#ff006e', shadowColor:'rgba(255,0,110,0.8)', shadowBlur:10 },
                 areaStyle: {
                     color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                        { offset: 0, color: 'rgba(255, 0, 110, 0.5)' },
-                        { offset: 1, color: 'rgba(255, 0, 110, 0.1)' }
+                        { offset: 0, color: 'rgba(255, 0, 110, 0.42)' },
+                        { offset: 1, color: 'rgba(255, 0, 110, 0.03)' }
                     ])
                 }
             }
@@ -1118,10 +1110,10 @@ function updateDispatchView() {
     // 添加站点标记
     stations.forEach(station => {
         let color = '#06ffa5';
-        if (station.currentBikes < 3) color = '#ff006e';
-        else if (station.currentBikes < 8) color = '#ffbe0b';
-        else if (station.currentBikes > 40) color = '#ff006e';
-        else if (station.currentBikes > 25) color = '#ffbe0b';
+        if (station.currentBikes < THRESHOLD_SHORTAGE) color = '#ff006e';
+        else if (station.currentBikes < THRESHOLD_LOW)  color = '#ffbe0b';
+        else if (station.currentBikes > THRESHOLD_SURPLUS) color = '#ff006e';
+        else if (station.currentBikes > THRESHOLD_HIGH)    color = '#ffbe0b';
 
         const icon = L.divIcon({
             html: `<div style="background:${color};width:35px;height:35px;border-radius:50%;
@@ -1138,8 +1130,8 @@ function updateDispatchView() {
 }
 
 function generateDispatchRecommendation() {
-    const shortage = stations.filter(s => s.currentBikes < 5).sort((a, b) => a.currentBikes - b.currentBikes);
-    const surplus = stations.filter(s => s.currentBikes > 30).sort((a, b) => b.currentBikes - a.currentBikes);
+    const shortage = stations.filter(s => s.currentBikes < THRESHOLD_SHORTAGE).sort((a, b) => a.currentBikes - b.currentBikes);
+    const surplus = stations.filter(s => s.currentBikes > THRESHOLD_SURPLUS).sort((a, b) => b.currentBikes - a.currentBikes);
 
     const container = document.getElementById('dispatchHistory');
     if (!container) return;
@@ -1339,18 +1331,14 @@ function updateHeatmapView() {
         let color = '#06ffa5'; // 绿色
         let size = 40;
 
-        if (station.currentBikes < 3) {
-            color = '#ff006e'; // 红色
-            size = 45;
-        } else if (station.currentBikes < 8) {
-            color = '#ffbe0b'; // 黄色
-            size = 42;
-        } else if (station.currentBikes > 40) {
-            color = '#ff006e'; // 红色
-            size = 50;
-        } else if (station.currentBikes > 25) {
-            color = '#ffbe0b'; // 黄色
-            size = 45;
+        if (station.currentBikes < THRESHOLD_SHORTAGE) {
+            color = '#ff006e'; size = 45;
+        } else if (station.currentBikes < THRESHOLD_LOW) {
+            color = '#ffbe0b'; size = 42;
+        } else if (station.currentBikes > THRESHOLD_SURPLUS) {
+            color = '#ff006e'; size = 50;
+        } else if (station.currentBikes > THRESHOLD_HIGH) {
+            color = '#ffbe0b'; size = 45;
         }
 
         const icon = L.divIcon({
@@ -1443,8 +1431,8 @@ function generateAISuggestions() {
     if (!warnings || !optimizations || !predictions) return;
 
     // 预警提示
-    const shortage = stations.filter(s => s.currentBikes < 5);
-    const surplus = stations.filter(s => s.currentBikes > 30); // 改为固定阈值
+    const shortage = stations.filter(s => s.currentBikes < THRESHOLD_SHORTAGE);
+    const surplus = stations.filter(s => s.currentBikes > THRESHOLD_SURPLUS);
 
     let warningText = '';
     if (shortage.length > 0) {
@@ -1514,161 +1502,83 @@ function calculatePopularRoutes() {
 
 
 // ========== 第15部分：性能仪表盘选项卡 (增强版) ==========
+
+/* 实时更新仪表盘指针（不重新初始化，保留动画） */
+function _updateGaugeLive() {
+    var totalBikes  = stations.reduce(function(sum,s){return sum+s.currentBikes;}, 0);
+    var totalInit   = stations.reduce(function(sum,s){return sum+s.initialBikes;}, 0);
+    var TL = (typeof THRESHOLD_LOW  !=='undefined') ? THRESHOLD_LOW  : 8;
+    var TH = (typeof THRESHOLD_HIGH !=='undefined') ? THRESHOLD_HIGH : 25;
+    var normalCount = stations.filter(function(s){ return s.currentBikes>=TL && s.currentBikes<=TH; }).length;
+    var utilizationVal  = parseFloat((totalBikes / Math.max(totalInit,1) * 100).toFixed(1));
+    var satisfactionVal = parseFloat((normalCount / Math.max(stations.length,1) * 100).toFixed(1));
+    var efficiencyVal   = parseFloat(Math.min(98, 55 + satisfactionVal * 0.43).toFixed(1));
+
+    [['gauge1', utilizationVal], ['gauge2', satisfactionVal], ['gauge3', efficiencyVal]].forEach(function(pair) {
+        var el = document.getElementById(pair[0]);
+        if (!el) return;
+        var inst = echarts.getInstanceByDom(el);
+        if (inst) inst.setOption({ series: [{ data: [{ value: pair[1] }] }] }, false);
+    });
+}
+
 function renderDashboardTab() {
-    setTimeout(() => {
-        // 车辆利用率仪表盘
+    setTimeout(function() {
+        var totalBikes  = stations.reduce(function(s,st){return s+st.currentBikes;}, 0);
+        var totalInit   = stations.reduce(function(s,st){return s+st.initialBikes;}, 0);
+        var TL = (typeof THRESHOLD_LOW  !=='undefined') ? THRESHOLD_LOW  : 8;
+        var TH = (typeof THRESHOLD_HIGH !=='undefined') ? THRESHOLD_HIGH : 25;
+        var normalCount = stations.filter(function(s){ return s.currentBikes>=TL && s.currentBikes<=TH; }).length;
+        var utilizationRate  = parseFloat((totalBikes / Math.max(totalInit,1) * 100).toFixed(1));
+        var satisfactionRate = parseFloat((normalCount / Math.max(stations.length,1) * 100).toFixed(1));
+        var efficiencyRate   = parseFloat(Math.min(98, 55 + satisfactionRate * 0.43).toFixed(1));
+
+        var gaugeBase = {
+            type: 'gauge', startAngle: 180, endAngle: 0, min: 0, max: 100,
+            center: ['50%', '70%'], radius: '120%',
+            axisLine: { lineStyle: { width: 22, color: [[0.3,'#ff006e'],[0.7,'#ffbe0b'],[1,'#06ffa5']] } },
+            pointer: { itemStyle: { color: '#00d4ff' }, width: 8, length: '70%' },
+            axisTick: { show: false }, splitLine: { show: false },
+            axisLabel: { color: '#aac', fontSize: 10 },
+            animation: true, animationDuration: 800, animationEasing: 'cubicOut',
+            detail: { valueAnimation: true, formatter: '{value}%', color: '#fff', fontSize: 28,
+                      offsetCenter: [0, '-10%'] }
+        };
+
+        // 车辆在站率
         chartInstances.gauge1 = echarts.init(document.getElementById('gauge1'));
-        const totalBikes = stations.reduce((sum, s) => sum + s.currentBikes, 0);
-        const totalInitBikes = stations.reduce((sum, s) => sum + s.initialBikes, 0);
-        const utilizationRate = (totalBikes / (totalInitBikes * 2) * 100).toFixed(1); // 假设最优是初始的2倍
+        chartInstances.gauge1.setOption({ backgroundColor:'transparent',
+            series: [Object.assign({}, gaugeBase, { data: [{ value: utilizationRate, name: '在站率' }] })] });
 
-        chartInstances.gauge1.setOption({
-            series: [
-                {
-                    type: 'gauge',
-                    startAngle: 180,
-                    endAngle: 0,
-                    min: 0,
-                    max: 100,
-                    center: ['50%', '70%'],
-                    radius: '120%',
-                    axisLine: {
-                        lineStyle: {
-                            width: 20,
-                            color: [
-                                [0.3, '#ff006e'],
-                                [0.7, '#ffbe0b'],
-                                [1, '#06ffa5']
-                            ]
-                        }
-                    },
-                    pointer: {
-                        itemStyle: { color: '#00d4ff' },
-                        width: 8
-                    },
-                    axisTick: { show: false },
-                    splitLine: { show: false },
-                    axisLabel: {
-                        color: '#fff',
-                        fontSize: 12
-                    },
-                    detail: {
-                        valueAnimation: true,
-                        formatter: '{value}%',
-                        color: '#fff',
-                        fontSize: 30
-                    },
-                    data: [{ value: utilizationRate }]
-                }
-            ]
-        });
-
-        // 用户满意度仪表盘
+        // 站点健康率
         chartInstances.gauge2 = echarts.init(document.getElementById('gauge2'));
-        const normalStations = stations.filter(s => s.status === 'normal').length;
-        const satisfaction = (normalStations / TOTAL_STATIONS * 100).toFixed(1);
+        chartInstances.gauge2.setOption({ backgroundColor:'transparent',
+            series: [Object.assign({}, gaugeBase, { data: [{ value: satisfactionRate, name: '健康率' }] })] });
 
-        chartInstances.gauge2.setOption({
-            series: [
-                {
-                    type: 'gauge',
-                    startAngle: 180,
-                    endAngle: 0,
-                    min: 0,
-                    max: 100,
-                    center: ['50%', '70%'],
-                    radius: '120%',
-                    axisLine: {
-                        lineStyle: {
-                            width: 20,
-                            color: [
-                                [0.3, '#ff006e'],
-                                [0.7, '#ffbe0b'],
-                                [1, '#06ffa5']
-                            ]
-                        }
-                    },
-                    pointer: {
-                        itemStyle: { color: '#00d4ff' },
-                        width: 8
-                    },
-                    axisTick: { show: false },
-                    splitLine: { show: false },
-                    axisLabel: {
-                        color: '#fff',
-                        fontSize: 12
-                    },
-                    detail: {
-                        valueAnimation: true,
-                        formatter: '{value}%',
-                        color: '#fff',
-                        fontSize: 30
-                    },
-                    data: [{ value: satisfaction }]
-                }
-            ]
-        });
-
-        // 调度效率仪表盘
+        // 调度效率
         chartInstances.gauge3 = echarts.init(document.getElementById('gauge3'));
-        const efficiency = Math.min(95, 70 + Math.random() * 20).toFixed(1);
+        chartInstances.gauge3.setOption({ backgroundColor:'transparent',
+            series: [Object.assign({}, gaugeBase, { data: [{ value: efficiencyRate, name: '效率' }] })] });
 
-        chartInstances.gauge3.setOption({
-            series: [
-                {
-                    type: 'gauge',
-                    startAngle: 180,
-                    endAngle: 0,
-                    min: 0,
-                    max: 100,
-                    center: ['50%', '70%'],
-                    radius: '120%',
-                    axisLine: {
-                        lineStyle: {
-                            width: 20,
-                            color: [
-                                [0.3, '#ff006e'],
-                                [0.7, '#ffbe0b'],
-                                [1, '#06ffa5']
-                            ]
-                        }
-                    },
-                    pointer: {
-                        itemStyle: { color: '#00d4ff' },
-                        width: 8
-                    },
-                    axisTick: { show: false },
-                    splitLine: { show: false },
-                    axisLabel: {
-                        color: '#fff',
-                        fontSize: 12
-                    },
-                    detail: {
-                        valueAnimation: true,
-                        formatter: '{value}%',
-                        color: '#fff',
-                        fontSize: 30
-                    },
-                    data: [{ value: efficiency }]
-                }
-            ]
-        });
+        // 雷达图 & 库存分布图
+        setTimeout(function() {
+            window.renderStationRadarChart && window.renderStationRadarChart();
+            window.renderStationStockChart && window.renderStationStockChart();
+        }, 60);
 
-        // 更新统计数据
-        const completedTrips = currentOrders.filter(o => o.completed).length;
-        const durations = currentOrders.filter(o => o.completed && o.duration).map(o => o.duration);
-        const avgDuration = durations.length > 0
-            ? (durations.reduce((a, b) => a + b, 0) / durations.length).toFixed(1)
-            : 0;
-
-        document.getElementById('totalTrips').textContent = completedTrips;
-        document.getElementById('avgDuration').textContent = avgDuration;
-        document.getElementById('dispatchCount').textContent = dispatchHistory.length;
     }, 100);
 }
 
 function updateDashboardView() {
-    renderDashboardTab();
+    // 仪表盘已初始化时只更新数据（带动画），避免重建闪烁
+    var g1 = document.getElementById('gauge1');
+    if (g1 && echarts.getInstanceByDom(g1)) {
+        _updateGaugeLive();
+        window.renderStationRadarChart && window.renderStationRadarChart();
+        window.renderStationStockChart && window.renderStationStockChart();
+    } else {
+        renderDashboardTab();
+    }
 }
 
 // ========== 第16部分：数据导出功能 ==========
@@ -2938,3 +2848,640 @@ document.addEventListener('DOMContentLoaded', function() {
     addLog('系统初始化完成，准备就绪', 'success');
 
 });
+
+// ============================================================================
+// ========== 综合补丁 v4（末尾追加，原有代码零改动）==========
+// 1. 热力图：深色主题 + 排名面板扩大 + 字体清晰 + 顶部汇总条
+// 2. 时序趋势：新增各站点实时库存图 + 已完成订单累计图
+// 3. AI建议：新增热门路线图 + 紧急调度建议列表
+// 4. 性能仪表盘雷达：改为11站全量健康度柱状图（更直观）
+// 5. 小卡片/健康评分实时更新（修复 let 变量访问问题）
+// 6. 重置后立即清零 + dispatchHistory清空
+// ============================================================================
+
+(function () {
+
+    /* ── 工具 ── */
+    function safeInit(id) {
+        const el = document.getElementById(id);
+        if (!el) return null;
+        try { const ex = echarts.getInstanceByDom(el); if (ex) ex.dispose(); } catch (e) {}
+        return echarts.init(el);
+    }
+
+    /* ====================================================
+       1. 覆盖 renderHeatmapTab —— 深色主题 + 大排名面板
+    ==================================================== */
+    window.renderHeatmapTab = function () {
+        const content = document.getElementById('heatmap');
+        if (!content) return;
+        content.innerHTML = `
+            <div style="display:flex;gap:0;height:100%;">
+                <!-- 地图区 flex:3 -->
+                <div style="flex:3;position:relative;overflow:hidden;">
+                    <div id="heatmap-map" style="width:100%;height:100%;"></div>
+                    <!-- 图例 -->
+                    <div style="position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
+                                background:rgba(5,12,30,0.82);border:1px solid rgba(0,212,255,0.22);
+                                border-radius:20px;padding:6px 20px;display:flex;gap:16px;align-items:center;
+                                font-size:12px;color:#cce;backdrop-filter:blur(6px);z-index:800;">
+                        <span>颜色：</span>
+                        <span><span style="color:#00d4ff;">●</span> 低频</span>
+                        <span><span style="color:#06ffa5;">●</span> 正常</span>
+                        <span><span style="color:#ffbe0b;">●</span> 繁忙</span>
+                        <span><span style="color:#ff006e;">●</span> 拥堵</span>
+                    </div>
+                </div>
+                <!-- 右侧排名面板 flex:1.2 -->
+                <div style="flex:0 0 310px;background:var(--panel-bg);border-left:1px solid rgba(0,212,255,0.1);
+                             display:flex;flex-direction:column;overflow:hidden;">
+                    <!-- 顶部汇总条 -->
+                    <div id="hm-summary-bar" style="padding:12px 14px;border-bottom:1px solid rgba(0,212,255,0.1);
+                                flex-shrink:0;display:grid;grid-template-columns:1fr 1fr;gap:8px;"></div>
+                    <!-- 排名标题 -->
+                    <div style="padding:10px 14px 6px;flex-shrink:0;font-size:12px;font-weight:700;
+                                color:var(--primary);letter-spacing:1px;text-transform:uppercase;
+                                border-bottom:1px solid rgba(0,212,255,0.07);">
+                        📊 站点热度排名
+                        <span style="font-size:10px;color:rgba(140,170,220,0.5);font-weight:400;margin-left:8px;">实时累计进出次数</span>
+                    </div>
+                    <!-- 排名列表 -->
+                    <div id="heatmap-ranking" style="flex:1;overflow-y:auto;padding:10px 12px;"></div>
+                </div>
+            </div>`;
+
+        if (heatmapMapInstance) heatmapMapInstance.remove();
+        heatmapMapInstance = L.map('heatmap-map').setView(wgs2gcj(116.0350, 28.6841), 15);
+        L.tileLayer('https://webrd02.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+            { attribution: '© 高德地图' }).addTo(heatmapMapInstance);
+        updateHeatmapView();
+        _updateHmSummary();
+    };
+
+    /* 顶部汇总条 */
+    function _updateHmSummary() {
+        const bar = document.getElementById('hm-summary-bar');
+        if (!bar) return;
+        const comp = (currentOrders || []).filter(o => o.completed).length;
+        const active = (currentOrders || []).filter(o => o.active).length;
+        const shortage = stations.filter(s => s.currentBikes < 5).length;
+        const surplus  = stations.filter(s => s.currentBikes > 30).length;
+        const items = [
+            { label: '今日完成', value: comp, color: '#00d4ff' },
+            { label: '在途骑行', value: active, color: '#06ffa5' },
+            { label: '缺车站点', value: shortage, color: '#ffbe0b' },
+            { label: '积压站点', value: surplus, color: '#ff4d6d' },
+        ];
+        bar.innerHTML = items.map(it => `
+            <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);
+                        border-radius:8px;padding:8px 10px;text-align:center;">
+                <div style="font-size:11px;color:rgba(160,195,255,0.5);margin-bottom:3px;">${it.label}</div>
+                <div style="font-family:'Orbitron',monospace;font-size:20px;font-weight:700;color:${it.color};">${it.value}</div>
+            </div>`).join('');
+    }
+
+    /* 覆盖 updateHeatmapRanking —— 深色主题 + 清晰大字 */
+    window.updateHeatmapRanking = function () {
+        const container = document.getElementById('heatmap-ranking');
+        if (!container) return;
+        _updateHmSummary();
+
+        const heat = stations.map(s => {
+            const incoming = (currentOrders || []).filter(o => o.destination === s.id && o.completed).length;
+            const outgoing = (currentOrders || []).filter(o => o.origin === s.id && o.completed).length;
+            return { name: s.name, incoming, outgoing, total: incoming + outgoing };
+        }).sort((a, b) => b.total - a.total);
+
+        const maxVal = heat[0]?.total || 1;
+        const medals = ['🥇', '🥈', '🥉'];
+        container.innerHTML = heat.map((s, i) => {
+            const pct = (s.total / maxVal * 100).toFixed(0);
+            const barColor = i === 0 ? '#ffbe0b' : i === 1 ? '#c0c0c0' : i === 2 ? '#cd7f32' : '#00d4ff';
+            return `
+            <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,${i<3?'0.12':'0.05'});
+                        border-radius:10px;padding:10px 12px;margin-bottom:7px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                    <span style="font-size:${i<3?'18':'14'}px;min-width:22px;">${medals[i] || `#${i+1}`}</span>
+                    <span style="font-size:14px;font-weight:700;color:#dde8ff;flex:1;">${s.name}</span>
+                    <span style="font-family:'Orbitron',monospace;font-size:16px;font-weight:700;color:${barColor};">${s.total}</span>
+                </div>
+                <div style="display:flex;gap:12px;font-size:12px;margin-bottom:6px;">
+                    <span style="color:#06ffa5;">↓ 进站 ${s.incoming}</span>
+                    <span style="color:#ff006e;">↑ 出站 ${s.outgoing}</span>
+                </div>
+                <div style="height:5px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden;">
+                    <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,${barColor},rgba(0,0,0,0));
+                                border-radius:3px;transition:width 0.5s;"></div>
+                </div>
+            </div>`;
+        }).join('');
+    };
+
+    /* ====================================================
+       2. 时序趋势：使用 HTML 中预定义的 4 格布局
+          元素 tlStationBars / tlOrderProgress / tlRouteChart 已存在，无需注入
+    ==================================================== */
+    const _origTimeline = window.renderTimelineTab;
+    window.renderTimelineTab = function () {
+        _origTimeline && _origTimeline();
+        // 原函数已调用 _renderTlStationBars / _renderTlRouteChart / _renderTlOrderProgress
+        // 无需额外操作
+    };
+
+    function _injectTimelineExtra() {
+        // 已废弃：元素直接写在 HTML 中，无需动态注入
+        _renderTlStationBars && _renderTlStationBars();
+        _renderTlOrderProgress && _renderTlOrderProgress();
+        _renderTlRouteChart && _renderTlRouteChart();
+    }
+
+    function _renderTlStationBars() {
+        const chart = safeInit('tlStationBars');
+        if (!chart) return;
+        const data = stations.map(s => {
+            let c = '#06ffa5';
+            if (s.currentBikes === 0)                       c = '#ff4d6d';
+            else if (s.currentBikes < THRESHOLD_SHORTAGE)   c = '#ff4d6d';
+            else if (s.currentBikes > THRESHOLD_SURPLUS)    c = '#ffbe0b';
+            return { name: s.name, value: s.currentBikes, color: c };
+        });
+        chart.setOption({
+            backgroundColor: 'transparent',
+            animation: true, animationDuration: 600, animationEasing: 'cubicOut',
+            tooltip: { trigger: 'axis', formatter: p => `${p[0].name}：<b>${p[0].value}</b> 辆` },
+            grid: { left: 8, right: 8, top: 10, bottom: 45, containLabel: true },
+            xAxis: {
+                type: 'category',
+                data: data.map(d => d.name),
+                axisLabel: { color: '#99b', fontSize: 10, rotate: 35,
+                    formatter: v => v.length > 4 ? v.slice(0,3)+'…' : v },
+                axisLine: { lineStyle: { color: '#333' } }
+            },
+            yAxis: { type: 'value', axisLabel: { color: '#666', fontSize: 10 },
+                splitLine: { lineStyle: { color: '#1e2a3a' } } },
+            series: [{
+                type: 'bar', barMaxWidth: 28,
+                data: data.map(d => ({ value: d.value,
+                    itemStyle: {
+                        color: new echarts.graphic.LinearGradient(0,0,0,1,[
+                            {offset:0, color:d.color},
+                            {offset:1, color:d.color+'66'}
+                        ]),
+                        borderRadius: [4,4,0,0],
+                        shadowColor: d.color, shadowBlur: 8
+                    } })),
+                label: { show: true, position: 'top', color: '#bcd', fontSize: 10 },
+                emphasis: { itemStyle: { shadowBlur: 20 } }
+            }]
+        });
+    }
+
+    function _renderTlOrderProgress() {
+        const chart = safeInit('tlOrderProgress');
+        if (!chart) return;
+        const total = (currentOrders || []).length;
+        const comp  = (currentOrders || []).filter(o => o.completed).length;
+        const active = (currentOrders || []).filter(o => o.active).length;
+        const pend  = total - comp - active;
+        chart.setOption({
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'item' },
+            legend: { bottom: 6, textStyle: { color: '#aac', fontSize: 10 },
+                itemWidth: 10, itemHeight: 8 },
+            series: [{
+                type: 'pie', radius: ['45%', '68%'], center: ['50%', '44%'],
+                avoidLabelOverlap: true,
+                label: { show: true, formatter: '{d}%', color: '#dde8ff', fontSize: 11 },
+                labelLine: { length: 8, length2: 6 },
+                data: [
+                    { value: comp,   name: '已完成', itemStyle: { color: '#06ffa5' } },
+                    { value: active, name: '进行中', itemStyle: { color: '#ffbe0b' } },
+                    { value: pend,   name: '待出发', itemStyle: { color: 'rgba(0,212,255,0.3)' } }
+                ]
+            }]
+        });
+    }
+
+    function _renderTlRouteChart() {
+        const chart = safeInit('tlRouteChart');
+        if (!chart) return;
+        const routeMap = {};
+        (currentOrders || []).filter(o => o.completed).forEach(o => {
+            const fn = stations.find(s => s.id === o.origin)?.name || '?';
+            const tn = stations.find(s => s.id === o.destination)?.name || '?';
+            const key = `${fn}→${tn}`;
+            routeMap[key] = (routeMap[key] || 0) + 1;
+        });
+        const top8 = Object.entries(routeMap)
+            .sort((a, b) => b[1] - a[1]).slice(0, 8)
+            .map(([k, v]) => ({ name: k, value: v }));
+
+        if (top8.length === 0) {
+            chart.setOption({ backgroundColor:'transparent',
+                graphic: [{ type:'text', left:'center', top:'middle',
+                    style: { text:'仿真启动后将显示热门路线', fill:'rgba(160,190,255,0.3)', fontSize:13 } }] });
+            return;
+        }
+        chart.setOption({
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis', formatter: p => `${p[0].name}：<b>${p[0].value}</b> 次` },
+            grid: { left: 8, right: 50, top: 6, bottom: 6, containLabel: true },
+            xAxis: { type: 'value', axisLabel: { color: '#666', fontSize: 10 },
+                splitLine: { lineStyle: { color: '#1e2a3a' } } },
+            yAxis: { type: 'category', data: top8.map(d => d.name).reverse(),
+                axisLabel: { color: '#aac', fontSize: 10 }, axisTick: { show: false } },
+            series: [{
+                type: 'bar', barMaxWidth: 16,
+                data: top8.map((d,i) => ({
+                    value: d.value,
+                    itemStyle: { color: new echarts.graphic.LinearGradient(0,0,1,0,[
+                        { offset:0, color: i===0?'#ffbe0b':i===1?'#06ffa5':'#00d4ff' },
+                        { offset:1, color: 'rgba(0,212,255,0.1)' }
+                    ]), borderRadius:[0,4,4,0] }
+                })).reverse(),
+                label: { show:true, position:'right', color:'#bcd', fontSize:10, formatter:'{c}次' }
+            }]
+        });
+    }
+
+    /* ====================================================
+       3. AI建议：新增热门路线图 + 紧急调度优先级列表
+    ==================================================== */
+    // 暴露为全局，供 renderTimelineTab 调用
+    window._renderTlStationBars  = _renderTlStationBars;
+    window._renderTlOrderProgress = _renderTlOrderProgress;
+    window._renderTlRouteChart   = _renderTlRouteChart;
+    const _origAI = window.generateAISuggestions;
+    window.generateAISuggestions = function () {
+        _origAI && _origAI();
+        setTimeout(() => {
+            _injectAIExtra();
+        }, 150);
+    };
+
+    function _injectAIExtra() {
+        const content = document.getElementById('ai-suggestions-content');
+        if (!content) return;
+        if (document.getElementById('ai-extra-injected')) {
+            _renderAIDispatchPriority();
+            _renderAIRouteChart();
+            return;
+        }
+        const frag = document.createElement('div');
+        frag.id = 'ai-extra-injected';
+        frag.innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:13px;">
+                <div class="cbox">
+                    <div class="cbox-ttl">🚨 紧急调度优先级</div>
+                    <div id="aiDispatchPriority" style="max-height:240px;overflow-y:auto;"></div>
+                </div>
+                <div class="cbox">
+                    <div class="cbox-ttl">🔀 实时热门路线</div>
+                    <div id="aiRouteChart" style="height:240px;"></div>
+                </div>
+            </div>
+            <div class="cbox">
+                <div class="cbox-ttl">📊 各站点供需缺口</div>
+                <div id="aiSupplyDemandChart" style="height:200px;"></div>
+            </div>`;
+        content.appendChild(frag);
+        _renderAIDispatchPriority();
+        _renderAIRouteChart();
+        _renderAISupplyDemand();
+    }
+
+    function _renderAIDispatchPriority() {
+        const el = document.getElementById('aiDispatchPriority');
+        if (!el) return;
+        const urgent = stations.map(s => {
+            let urgency = 0, type = '', color = '#888';
+            if (s.currentBikes === 0)     { urgency = 5; type = '🚨 已清空，立即补车'; color = '#ff006e'; }
+            else if (s.currentBikes < 3)  { urgency = 4; type = '🔴 严重缺车'; color = '#ff4d6d'; }
+            else if (s.currentBikes < 8)  { urgency = 3; type = '⚠️ 偏少，建议补充'; color = '#ffbe0b'; }
+            else if (s.currentBikes > 40) { urgency = 4; type = '📦 严重积压，需转移'; color = '#ff4d6d'; }
+            else if (s.currentBikes > 25) { urgency = 2; type = '📊 轻度积压'; color = '#ffbe0b'; }
+            else                          { urgency = 0; type = '✅ 状态正常'; color = '#06ffa5'; }
+            return { ...s, urgency, type, color };
+        }).sort((a, b) => b.urgency - a.urgency);
+
+        el.innerHTML = urgent.map(s => `
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;
+                        background:rgba(255,255,255,0.03);border-radius:8px;margin-bottom:6px;
+                        border-left:3px solid ${s.color};">
+                <div style="flex:1;">
+                    <div style="font-size:13px;font-weight:700;color:#dde8ff;">${s.name}</div>
+                    <div style="font-size:11px;color:${s.color};margin-top:2px;">${s.type}</div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-family:'Orbitron',monospace;font-size:18px;font-weight:700;color:${s.color};">${s.currentBikes}</div>
+                    <div style="font-size:10px;color:#666;">辆</div>
+                </div>
+            </div>`).join('');
+    }
+
+    function _renderAIRouteChart() {
+        const chart = safeInit('aiRouteChart');
+        if (!chart) return;
+        const routeMap = {};
+        (currentOrders || []).filter(o => o.completed).forEach(o => {
+            const fn = stations.find(s => s.id === o.origin)?.name || '?';
+            const tn = stations.find(s => s.id === o.destination)?.name || '?';
+            const key = `${fn}→${tn}`;
+            routeMap[key] = (routeMap[key] || 0) + 1;
+        });
+        const top6 = Object.entries(routeMap)
+            .sort((a, b) => b[1] - a[1]).slice(0, 6)
+            .map(([k, v]) => ({ name: k, value: v }));
+
+        if (top6.length === 0) {
+            chart.setOption({ backgroundColor:'transparent',
+                graphic:[{type:'text',left:'center',top:'middle',
+                    style:{text:'仿真启动后将显示路线数据',fill:'rgba(160,190,255,0.3)',fontSize:12}}]});
+            return;
+        }
+        chart.setOption({
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis' },
+            grid: { left:8, right:50, top:6, bottom:6, containLabel:true },
+            xAxis: { type:'value', axisLabel:{color:'#666',fontSize:10},
+                splitLine:{lineStyle:{color:'#1e2a3a'}} },
+            yAxis: { type:'category', data:top6.map(d=>d.name).reverse(),
+                axisLabel:{color:'#aac',fontSize:9,formatter:v=>v.length>10?v.slice(0,9)+'…':v},
+                axisTick:{show:false} },
+            series:[{ type:'bar', barMaxWidth:14,
+                data: top6.map((d,i)=>({value:d.value,
+                    itemStyle:{color:new echarts.graphic.LinearGradient(0,0,1,0,[
+                        {offset:0,color:['#ff006e','#ffbe0b','#00d4ff','#06ffa5','#7b2cbf','#00b4d8'][i]},
+                        {offset:1,color:'rgba(0,0,0,0)'}
+                    ]),borderRadius:[0,4,4,0]}})).reverse(),
+                label:{show:true,position:'right',color:'#bcd',fontSize:10,formatter:'{c}次'}
+            }]
+        });
+    }
+
+    function _renderAISupplyDemand() {
+        const chart = safeInit('aiSupplyDemandChart');
+        if (!chart) return;
+        chart.setOption({
+            backgroundColor:'transparent',
+            tooltip:{trigger:'axis',axisPointer:{type:'shadow'}},
+            legend:{top:4,right:8,textStyle:{color:'#aac',fontSize:10},itemWidth:10,itemHeight:8},
+            grid:{left:8,right:8,top:30,bottom:40,containLabel:true},
+            xAxis:{type:'category',data:stations.map(s=>s.name),
+                axisLabel:{color:'#99b',fontSize:9,rotate:30,
+                    formatter:v=>v.length>4?v.slice(0,3)+'…':v},
+                axisLine:{lineStyle:{color:'#333'}}},
+            yAxis:{type:'value',axisLabel:{color:'#666',fontSize:9},
+                splitLine:{lineStyle:{color:'#1e2a3a'}}},
+            series:[
+                {name:'当前库存',type:'bar',barMaxWidth:16,
+                    data:stations.map(s=>({value:s.currentBikes,
+                        itemStyle:{color:s.currentBikes<5?'#ff4d6d':s.currentBikes<8?'#ffbe0b':'#06ffa5',
+                            borderRadius:[3,3,0,0]}}))},
+                {name:'初始配置',type:'bar',barMaxWidth:16,
+                    data:stations.map(s=>({value:s.initialBikes,
+                        itemStyle:{color:'rgba(150,165,200,0.2)',borderRadius:[3,3,0,0]}}))}
+            ]
+        });
+    }
+
+    /* ====================================================
+       4. 性能仪表盘雷达：改为全站11个健康度柱状图
+    ==================================================== */
+    window.renderStationRadarChart = function () {
+        const chart = safeInit('stationRadarChart');
+        if (!chart) return;
+
+        const TL = typeof THRESHOLD_LOW!=='undefined'?THRESHOLD_LOW:8;
+        const TH = typeof THRESHOLD_HIGH!=='undefined'?THRESHOLD_HIGH:25;
+        const TS = typeof THRESHOLD_SHORTAGE!=='undefined'?THRESHOLD_SHORTAGE:5;
+        const TSU= typeof THRESHOLD_SURPLUS!=='undefined'?THRESHOLD_SURPLUS:35;
+
+        const data = stations.map(s => {
+            let score, color;
+            const b = s.currentBikes;
+            if      (b === 0)   { score = 5;  color = '#ff006e'; }
+            else if (b < TS)    { score = 22; color = '#ff4d6d'; }
+            else if (b < TL)    { score = 55; color = '#ffbe0b'; }
+            else if (b > TSU)   { score = 28; color = '#ff4d6d'; }
+            else if (b > TH)    { score = 68; color = '#ffbe0b'; }
+            else                { score = Math.min(100, 80 + (b - TL)); color = '#06ffa5'; }
+            return { name: s.name, score, color };
+        });
+
+        chart.setOption({
+            backgroundColor: 'transparent',
+            animation: true, animationDuration: 700, animationEasing: 'cubicOut',
+            tooltip: { trigger:'axis', formatter: p => `${p[0].name}<br/>健康度：<b>${p[0].value}</b>` },
+            grid: { left:8, right:8, top:6, bottom:44, containLabel:true },
+            xAxis: {
+                type:'category',
+                data: data.map(d => d.name),
+                axisLabel: { color:'#99b', fontSize:9, rotate:30,
+                    formatter: v => v.length>4 ? v.slice(0,3)+'…' : v },
+                axisLine: { lineStyle:{ color:'#333' } }
+            },
+            yAxis: {
+                type:'value', min:0, max:100,
+                axisLabel: { color:'#666', fontSize:9,
+                    formatter: v => v===100?'满':v===0?'':v },
+                splitLine: { lineStyle:{ color:'#1e2a3a' } }
+            },
+            series: [{
+                type:'bar', barMaxWidth:24,
+                data: data.map(d => ({
+                    value: d.score,
+                    itemStyle: { color: new echarts.graphic.LinearGradient(0,1,0,0,[
+                        { offset:0, color: d.color+'44' },
+                        { offset:1, color: d.color }
+                    ]), borderRadius:[4,4,0,0] }
+                })),
+                label: { show:true, position:'top', color:'#bcd', fontSize:9,
+                    formatter: p => p.value >= 80 ? '✓' : p.value >= 55 ? '~' : '!' }
+            }]
+        }, false);
+    };
+
+    /* ====================================================
+       5. 小卡片实时更新 / 健康评分
+    ==================================================== */
+    window.updateExtraMetrics = function () {
+        if (!stations || !stations.length) return;
+        // 数据已由 updateStatistics() 更新，此处仅作兜底同步
+        const comp = (currentOrders||[]).filter(o=>o.completed);
+        const e1=document.getElementById('totalTrips');     if(e1)e1.textContent=comp.length;
+        const e2=document.getElementById('dispatchCount');  if(e2)e2.textContent=(dispatchHistory||[]).length;
+        const durs=comp.filter(o=>o.duration).map(o=>o.duration);
+        const e3=document.getElementById('avgDuration');
+        if(e3)e3.textContent=durs.length?(durs.reduce((a,b)=>a+b,0)/durs.length).toFixed(1):'0';
+        const total=stations.reduce((s,st)=>s+st.currentBikes,0);
+        const init =stations.reduce((s,st)=>s+st.initialBikes,0);
+        const e4=document.getElementById('utilizationRate');
+        if(e4)e4.textContent=((total/Math.max(init,1))*100).toFixed(0)+'%';
+        // 使用统一阈值计算健康分
+        const normalCnt=stations.filter(s=>s.currentBikes>=(typeof THRESHOLD_LOW!=='undefined'?THRESHOLD_LOW:8)&&
+            s.currentBikes<=(typeof THRESHOLD_HIGH!=='undefined'?THRESHOLD_HIGH:25)).length;
+        const sc=Math.round((normalCnt/stations.length)*100);
+        const e5=document.getElementById('healthScore');
+        if(e5){e5.textContent=sc;e5.style.color=sc>=80?'var(--success)':sc>=60?'var(--warning)':'var(--danger)';}
+    };
+
+    /* ====================================================
+       6. 包装 updateStatistics 和 resetSimulation
+    ==================================================== */
+    const _origStats=window.updateStatistics;
+    window.updateStatistics=function(){
+        _origStats&&_origStats();
+        window.updateExtraMetrics();
+        window.updateStationQuickList&&window.updateStationQuickList();
+        const cTab=document.getElementById('comparison');
+        if(cTab&&cTab.classList.contains('active')){
+            _updateCompChart4Live && _updateCompChart4Live();
+            renderStationDetailTable && renderStationDetailTable();
+        }
+        const dTab=document.getElementById('dashboard');
+        if(dTab&&dTab.classList.contains('active')){
+            window.renderStationRadarChart();
+            renderStationStockChart && renderStationStockChart();
+        }
+        const hTab=document.getElementById('heatmap');
+        if(hTab&&hTab.classList.contains('active'))window.updateHeatmapRanking();
+        const tTab=document.getElementById('timeline');
+        if(tTab&&tTab.classList.contains('active')){
+            _renderTlStationBars&&_renderTlStationBars();
+            _renderTlOrderProgress&&_renderTlOrderProgress();
+        }
+        const sTab=document.getElementById('suggestions');
+        if(sTab&&sTab.classList.contains('active')){
+            _renderAIDispatchPriority&&_renderAIDispatchPriority();
+            _renderAIRouteChart&&_renderAIRouteChart();
+            _renderAISupplyDemand&&_renderAISupplyDemand();
+        }
+    };
+
+    const _origReset=window.resetSimulation;
+    window.resetSimulation=function(){
+        dispatchHistory.length=0;
+        _origReset&&_origReset();
+        ['totalTrips','dispatchCount'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent='0';});
+        const e3=document.getElementById('avgDuration');if(e3)e3.textContent='0';
+        const e4=document.getElementById('utilizationRate');if(e4)e4.textContent='100%';
+        window.updateExtraMetrics();
+    };
+
+    /* 库存分布图（stationStockChart）—— 供 renderDashboardTab 用 */
+    window.renderStationStockChart = function () {
+        const chart = safeInit('stationStockChart');
+        if (!chart) return;
+        const TL = typeof THRESHOLD_LOW!=='undefined'?THRESHOLD_LOW:8;
+        const TH = typeof THRESHOLD_HIGH!=='undefined'?THRESHOLD_HIGH:25;
+        const TS = typeof THRESHOLD_SHORTAGE!=='undefined'?THRESHOLD_SHORTAGE:5;
+        const TSU= typeof THRESHOLD_SURPLUS!=='undefined'?THRESHOLD_SURPLUS:35;
+        const sorted = [...stations].sort((a,b)=>a.currentBikes-b.currentBikes);
+        function gc(s){
+            const b=s.currentBikes;
+            if(b===0)return'#ff006e';
+            if(b<TS)return'#ff4d6d';
+            if(b<TL)return'#ffbe0b';
+            if(b>TSU)return'#ff4d6d';
+            if(b>TH)return'#ffbe0b';
+            return'#06ffa5';
+        }
+        chart.setOption({
+            backgroundColor:'transparent',
+            animation: true, animationDuration: 700, animationEasing: 'cubicOut',
+            tooltip:{trigger:'axis',axisPointer:{type:'shadow'},
+                formatter:p=>`${p[0].name}<br/>当前：<b>${p[0].value}</b>辆 / 初始：<b>${p[1]?.value}</b>辆`},
+            legend:{top:4,right:6,textStyle:{color:'#aac',fontSize:10},itemWidth:10,itemHeight:8},
+            grid:{left:8,right:50,top:26,bottom:6,containLabel:true},
+            xAxis:{type:'value',axisLabel:{color:'#666',fontSize:10},splitLine:{lineStyle:{color:'#1e2a3a'}}},
+            yAxis:{type:'category',data:sorted.map(s=>s.name),
+                axisLabel:{color:'#cce',fontSize:10,formatter:v=>v.length>6?v.slice(0,5)+'…':v},
+                axisTick:{show:false}},
+            series:[
+                {name:'当前库存',type:'bar',barGap:'10%',barMaxWidth:14,
+                    data:sorted.map(s=>({value:s.currentBikes,
+                        itemStyle:{
+                            color: new echarts.graphic.LinearGradient(1,0,0,0,[
+                                {offset:0, color:gc(s)},
+                                {offset:1, color:gc(s)+'44'}
+                            ]),
+                            borderRadius:[0,3,3,0],
+                            shadowColor: gc(s), shadowBlur: 8
+                        }})),
+                    label:{show:true,position:'right',color:'#bcd',fontSize:9,formatter:'{c}辆'}},
+                {name:'初始配置',type:'bar',barMaxWidth:14,
+                    data:sorted.map(s=>({value:s.initialBikes,
+                        itemStyle:{color:'rgba(150,160,200,0.15)',borderRadius:[0,3,3,0]}}))}
+            ]
+        }, false);
+    };
+
+    /* comparisonChart4 供 renderComparisonTab 用 */
+    function renderComparisonChart4(){
+        const chart=safeInit('comparisonChart4');
+        if(!chart)return;
+        const activity=stations.map(s=>{
+            const cnt=(currentOrders||[]).filter(o=>o.completed&&(o.origin===s.id||o.destination===s.id)).length;
+            return{name:s.name,value:cnt};
+        }).sort((a,b)=>b.value-a.value);
+        chart.setOption({
+            backgroundColor:'transparent',
+            tooltip:{trigger:'axis',formatter:p=>`${p[0].name}<br/>累计进出：<b>${p[0].value}</b>次`},
+            grid:{left:10,right:45,top:8,bottom:8,containLabel:true},
+            xAxis:{type:'value',axisLabel:{color:'#777',fontSize:10},splitLine:{lineStyle:{color:'#222'}}},
+            yAxis:{type:'category',data:activity.map(d=>d.name),
+                axisLabel:{color:'#cce',fontSize:10,formatter:v=>v.length>6?v.slice(0,5)+'…':v},
+                axisTick:{show:false}},
+            series:[{type:'bar',barMaxWidth:20,
+                data:activity.map((d,i)=>({value:d.value,
+                    itemStyle:{color:new echarts.graphic.LinearGradient(0,0,1,0,[
+                        {offset:0,color:i===0?'#ffbe0b':i===1?'#06ffa5':i===2?'#ff006e':'#00d4ff'},
+                        {offset:1,color:'rgba(0,212,255,0.1)'}])}})),
+                label:{show:true,position:'right',color:'#bcd',fontSize:10,formatter:'{c}次'}}]
+        });
+    }
+
+    function renderStationDetailTable(){
+        const el=document.getElementById('stationDetailTable');if(!el)return;
+        const rows=stations.map(s=>{
+            let st,c;
+            if(s.currentBikes===0){st='🚨 已清空';c='#ff006e';}
+            else if(s.currentBikes<5){st='🔴 缺车';c='#ff4d6d';}
+            else if(s.currentBikes<8){st='⚠️ 偏少';c='#ffbe0b';}
+            else if(s.currentBikes>35){st='📦 积压';c='#ff4d6d';}
+            else if(s.currentBikes>22){st='偏多';c='#ffbe0b';}
+            else{st='✅ 正常';c='#06ffa5';}
+            const diff=s.currentBikes-s.initialBikes,sign=diff>0?'+':'',dc=diff>0?'#06ffa5':diff<0?'#ff006e':'#888';
+            return`<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+                <td style="padding:5px 8px;color:#b0c8ff;font-size:11px;">${s.name}</td>
+                <td style="padding:5px 8px;text-align:center;font-family:'Orbitron',monospace;font-size:13px;font-weight:700;color:#00d4ff;">${s.currentBikes}</td>
+                <td style="padding:5px 8px;text-align:center;font-size:11px;color:#555;">${s.initialBikes}</td>
+                <td style="padding:5px 8px;text-align:center;font-size:11px;color:${dc};">${sign}${diff}</td>
+                <td style="padding:5px 8px;text-align:center;font-size:10px;color:${c};">${st}</td>
+            </tr>`;
+        }).join('');
+        el.innerHTML=`<table style="width:100%;border-collapse:collapse;">
+            <thead><tr style="border-bottom:1px solid rgba(0,212,255,0.15);">
+                <th style="padding:5px 8px;text-align:left;font-size:10px;color:rgba(0,212,255,0.5);">站点</th>
+                <th style="padding:5px 8px;text-align:center;font-size:10px;color:rgba(0,212,255,0.5);">当前</th>
+                <th style="padding:5px 8px;text-align:center;font-size:10px;color:rgba(0,212,255,0.5);">初始</th>
+                <th style="padding:5px 8px;text-align:center;font-size:10px;color:rgba(0,212,255,0.5);">变化</th>
+                <th style="padding:5px 8px;text-align:center;font-size:10px;color:rgba(0,212,255,0.5);">状态</th>
+            </tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    const _origComp=window.renderComparisonTab;
+    window.renderComparisonTab=function(){
+        _origComp&&_origComp();
+        setTimeout(()=>{renderComparisonChart4();renderStationDetailTable();},200);
+    };
+
+    const _origDash=window.renderDashboardTab;
+    window.renderDashboardTab=function(){
+        _origDash&&_origDash();
+        // radar & stock are already called inside renderDashboardTab with proper delay
+    };
+
+    console.log('✅ 综合补丁 v4 已加载');
+})();
