@@ -588,26 +588,24 @@ function updateNumber(id, value) {
     const strVal = String(value);
     if (el.textContent !== strVal) {
         el.textContent = strVal;
-        el.classList.remove('num-changed');
-        void el.offsetWidth; // reflow to restart animation
-        el.classList.add('num-changed');
-        setTimeout(() => el.classList.remove('num-changed'), 450);
     }
+}
+
+// 仅在需要高亮（如调度后）时调用此函数
+function flashNumber(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('num-changed');
+    void el.offsetWidth;
+    el.classList.add('num-changed');
+    setTimeout(() => el.classList.remove('num-changed'), 450);
 }
 
 function updateProgress(id, percent) {
     const el = document.getElementById(id);
     if (!el) return;
     const newW = Math.min(100, Math.max(0, percent));
-    const oldW = parseFloat(el.style.width) || 0;
     el.style.width = newW + '%';
-    // 值变化超过1%时触发闪光动画
-    if (Math.abs(newW - oldW) > 1) {
-        el.classList.remove('bar-changed');
-        void el.offsetWidth; // reflow强制重启动画
-        el.classList.add('bar-changed');
-        setTimeout(() => el.classList.remove('bar-changed'), 700);
-    }
 }
 
 function resetSimulation() {
@@ -880,92 +878,6 @@ function renderComparisonTab() {
             ]
         });
 
-        // 高峰时段分析
-        const chart2 = echarts.init(document.getElementById('comparisonChart2'));
-        chart2.setOption({
-            title: {
-                text: '高峰时段分析',
-                textStyle: { color: '#00d4ff' },
-                left: 'center'
-            },
-            backgroundColor: 'transparent',
-            tooltip: { trigger: 'item' },
-            legend: { top: 30, textStyle: { color: '#fff' } },
-            series: [
-                {
-                    name: '骑行分布',
-                    type: 'pie',
-                    radius: ['40%', '70%'],
-                    avoidLabelOverlap: false,
-                    label: {
-                        show: true,
-                        formatter: '{b}: {d}%',
-                        color: '#fff'
-                    },
-                    emphasis: {
-                        label: { show: true, fontSize: 20, fontWeight: 'bold' }
-                    },
-                    data: [
-                        { value: 150, name: '早高峰 (07:00-09:00)' },
-                        { value: 120, name: '午高峰 (12:00-14:00)' },
-                        { value: 180, name: '晚高峰 (17:00-19:00)' },
-                        { value: 80, name: '其他时段' }
-                    ],
-                    itemStyle: {
-                        color: function(params) {
-                            const colors = ['#00d4ff', '#06ffa5', '#ff006e', '#ffbe0b'];
-                            return colors[params.dataIndex];
-                        }
-                    }
-                }
-            ]
-        });
-
-        // 站点周转率对比
-        const chart3 = echarts.init(document.getElementById('comparisonChart3'));
-        const turnoverData = stations.map(s => ({
-            station: s.name,
-            rate: ((Math.abs(s.initialBikes - s.currentBikes) + Math.random() * 5) / s.initialBikes * 100).toFixed(1)
-        }));
-
-        chart3.setOption({
-            title: {
-                text: '站点周转率对比',
-                textStyle: { color: '#00d4ff' },
-                left: 'center'
-            },
-            backgroundColor: 'transparent',
-            tooltip: { trigger: 'axis' },
-            grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-            xAxis: {
-                type: 'category',
-                data: turnoverData.map(d => d.station),
-                axisLabel: { rotate: 45, textStyle: { color: '#fff' } },
-                axisLine: { lineStyle: { color: '#444' } }
-            },
-            yAxis: {
-                type: 'value',
-                name: '周转率 (%)',
-                axisLabel: { textStyle: { color: '#fff' } },
-                axisLine: { lineStyle: { color: '#444' } },
-                splitLine: { lineStyle: { color: '#333' } }
-            },
-            series: [
-                {
-                    type: 'line',
-                    data: turnoverData.map(d => d.rate),
-                    smooth: true,
-                    areaStyle: {
-                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                            { offset: 0, color: 'rgba(0, 212, 255, 0.5)' },
-                            { offset: 1, color: 'rgba(0, 212, 255, 0.1)' }
-                        ])
-                    },
-                    lineStyle: { color: '#00d4ff', width: 3 },
-                    itemStyle: { color: '#00d4ff' }
-                }
-            ]
-        });
     }, 100);
 }
 function setComparisonRange(range) {
@@ -982,8 +894,7 @@ function renderTimelineTab() {
         // 主趋势图
         chartInstances.timeline = echarts.init(document.getElementById('timelineChart'));
         updateTimelineCharts();
-        // 站点库存快照 + 路线 + 进度（元素已在HTML中预定义）
-        if (typeof _renderTlStationBars === 'function') _renderTlStationBars();
+        // 路线 + 进度（元素已在HTML中预定义）
         if (typeof _renderTlRouteChart  === 'function') _renderTlRouteChart();
         if (typeof _renderTlOrderProgress === 'function') _renderTlOrderProgress();
     }, 100);
@@ -1230,10 +1141,19 @@ function executeDispatch() {
     });
 
     addLog(`调度方案执行完成，共执行${window.currentDispatchPlan.length}项任务`, 'success');
+
+    // 更新所有数据面板，确保数据一致
     updateStatistics();
+    window.updateStationQuickList && window.updateStationQuickList();
+    window.updateExtraMetrics && window.updateExtraMetrics();
     updateMapMarkers();
     updateDispatchView();
     generateDispatchRecommendation();
+
+    // 调度次数高亮闪烁提示
+    flashNumber('dispatchCount');
+    // 站点健康度数字高亮
+    ['normalStations','shortageStations','surplusStations'].forEach(id => flashNumber(id));
 }
 
 function renderDispatchHistory() {
@@ -3130,24 +3050,12 @@ document.addEventListener('DOMContentLoaded', function() {
         const frag = document.createElement('div');
         frag.id = 'ai-extra-injected';
         frag.innerHTML = `
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:13px;">
-                <div class="cbox">
-                    <div class="cbox-ttl">🚨 紧急调度优先级</div>
-                    <div id="aiDispatchPriority" style="max-height:240px;overflow-y:auto;"></div>
-                </div>
-                <div class="cbox">
-                    <div class="cbox-ttl">🔀 实时热门路线</div>
-                    <div id="aiRouteChart" style="height:240px;"></div>
-                </div>
-            </div>
             <div class="cbox">
-                <div class="cbox-ttl">📊 各站点供需缺口</div>
-                <div id="aiSupplyDemandChart" style="height:200px;"></div>
+                <div class="cbox-ttl">🚨 紧急调度优先级</div>
+                <div id="aiDispatchPriority" style="max-height:320px;overflow-y:auto;"></div>
             </div>`;
         content.appendChild(frag);
         _renderAIDispatchPriority();
-        _renderAIRouteChart();
-        _renderAISupplyDemand();
     }
 
     function _renderAIDispatchPriority() {
@@ -3341,21 +3249,17 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         const dTab=document.getElementById('dashboard');
         if(dTab&&dTab.classList.contains('active')){
-            window.renderStationRadarChart();
             renderStationStockChart && renderStationStockChart();
         }
         const hTab=document.getElementById('heatmap');
         if(hTab&&hTab.classList.contains('active'))window.updateHeatmapRanking();
         const tTab=document.getElementById('timeline');
         if(tTab&&tTab.classList.contains('active')){
-            _renderTlStationBars&&_renderTlStationBars();
             _renderTlOrderProgress&&_renderTlOrderProgress();
         }
         const sTab=document.getElementById('suggestions');
         if(sTab&&sTab.classList.contains('active')){
             _renderAIDispatchPriority&&_renderAIDispatchPriority();
-            _renderAIRouteChart&&_renderAIRouteChart();
-            _renderAISupplyDemand&&_renderAISupplyDemand();
         }
     };
 

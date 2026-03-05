@@ -546,21 +546,10 @@ function enterSystem(){
         <!-- 数据对比 -->
         <div id="comparison" class="tab-content" style="height:100%;overflow:hidden;">
             <div class="cscroll">
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:13px;">
-                    <div class="cbox">
-                        <div class="cbox-ttl">📊 站点库存对比</div>
-                        <div id="comparisonChart1" style="height:300px;"></div>
-                    </div>
-                    <div class="cbox">
-                        <div class="cbox-ttl">📈 高峰时段分析</div>
-                        <div id="comparisonChart2" style="height:300px;"></div>
-                    </div>
-                </div>
                 <div class="cbox">
-                    <div class="cbox-ttl">🔄 站点周转率对比</div>
-                    <div id="comparisonChart3" style="height:260px;"></div>
+                    <div class="cbox-ttl">📊 站点库存对比</div>
+                    <div id="comparisonChart1" style="height:300px;"></div>
                 </div>
-                <!-- FIX 3: New bottom section -->
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:13px;">
                     <div class="cbox">
                         <div class="cbox-ttl">🏆 站点活跃度排行</div>
@@ -576,16 +565,11 @@ function enterSystem(){
 
         <!-- 时序分析 -->
         <div id="timeline" class="tab-content" style="height:100%;overflow:hidden;">
-            <div style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:12px;height:100%;padding:12px;box-sizing:border-box;">
-                <!-- 左上：时序趋势折线 -->
-                <div class="cbox" style="display:flex;flex-direction:column;overflow:hidden;margin-bottom:0;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1.2fr 0.8fr;gap:12px;height:100%;padding:12px;box-sizing:border-box;">
+                <!-- 顶部全宽：时序趋势折线 -->
+                <div class="cbox" style="display:flex;flex-direction:column;overflow:hidden;margin-bottom:0;grid-column:span 2;">
                     <div class="cbox-ttl" style="flex-shrink:0;">📉 车辆数量时序趋势</div>
                     <div id="timelineChart" style="flex:1;min-height:0;"></div>
-                </div>
-                <!-- 右上：各站点实时库存 -->
-                <div class="cbox" style="display:flex;flex-direction:column;overflow:hidden;margin-bottom:0;">
-                    <div class="cbox-ttl" style="flex-shrink:0;">🏪 各站点实时库存快照</div>
-                    <div id="tlStationBars" style="flex:1;min-height:0;"></div>
                 </div>
                 <!-- 左下：热门路线 -->
                 <div class="cbox" style="display:flex;flex-direction:column;overflow:hidden;margin-bottom:0;">
@@ -609,6 +593,17 @@ function enterSystem(){
                 <div class="dp-side">
                     <div style="font-size:12px;font-weight:700;color:var(--primary);flex-shrink:0;">📋 调度历史记录</div>
                     <div id="dispatchHistory" class="dp-log">[等待调度任务...]</div>
+                    <button onclick="executeDispatch()" style="
+                        width:100%; padding:11px; border:none; border-radius:10px;
+                        font-size:14px; font-weight:700; cursor:pointer; flex-shrink:0;
+                        background:linear-gradient(135deg,#ff006e,#7b2cbf);
+                        color:#fff; box-shadow:0 4px 16px rgba(255,0,110,0.35);
+                        transition:all 0.25s; letter-spacing:0.5px;
+                        display:flex; align-items:center; justify-content:center; gap:7px;
+                    " onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 22px rgba(255,0,110,0.52)'"
+                       onmouseout="this.style.transform='';this.style.boxShadow='0 4px 16px rgba(255,0,110,0.35)'">
+                        🚛 执行调度方案
+                    </button>
                     <div class="icard" style="padding:12px;flex-shrink:0;">
                         <div class="icard-ico" style="font-size:24px;margin-bottom:6px;">🎯</div>
                         <div class="icard-ttl" style="font-size:13px;">调度目标</div>
@@ -702,16 +697,10 @@ function enterSystem(){
                         <div id="gauge3" style="height:230px;"></div>
                     </div>
                 </div>
-                <!-- FIX 4: Replaced redundant trend chart with station health radar -->
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:13px;">
-                    <div class="cbox">
-                        <div class="cbox-ttl">🕸 各站点健康度雷达</div>
-                        <div id="stationRadarChart" style="height:260px;"></div>
-                    </div>
-                    <div class="cbox">
-                        <div class="cbox-ttl">📊 各站点当前库存分布</div>
-                        <div id="stationStockChart" style="height:260px;"></div>
-                    </div>
+                <!-- stationStockChart 全宽 -->
+                <div class="cbox">
+                    <div class="cbox-ttl">📊 各站点当前库存分布</div>
+                    <div id="stationStockChart" style="height:260px;"></div>
                 </div>
                 <div class="icgrid">
                     <div class="icard">
