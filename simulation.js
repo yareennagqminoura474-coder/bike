@@ -1040,7 +1040,7 @@ function updateDispatchView() {
     });
 }
 
-function generateDispatchRecommendation() {
+async function generateDispatchRecommendation() {
     const shortage = stations.filter(s => s.currentBikes < THRESHOLD_SHORTAGE).sort((a, b) => a.currentBikes - b.currentBikes);
     const surplus = stations.filter(s => s.currentBikes > THRESHOLD_SURPLUS).sort((a, b) => b.currentBikes - a.currentBikes);
 
@@ -1072,26 +1072,51 @@ function generateDispatchRecommendation() {
             html += '<div style="margin-top:15px;padding-top:15px;border-top:1px solid rgba(255,255,255,0.1);">';
             html += '<div style="color:#00d4ff;margin-bottom:10px;"><b>💡 推荐调度方案:</b></div>';
 
-            const dispatchPlan = [];
-            shortage.forEach((short, i) => {
-                if (i < surplus.length) {
-                    const surp = surplus[i];
-                    const transferAmount = Math.min(
-                        Math.floor((surp.currentBikes - 15) / 2), // 从积压站点转出
-                        10 - short.currentBikes // 补充到缺车站点
-                    );
-                    if (transferAmount > 0) {
-                        dispatchPlan.push({
-                            from: surp.name,
-                            to: short.name,
-                            amount: transferAmount
-                        });
-                        html += `<div style="margin-left:20px;color:#fff;margin-bottom:5px;">
-                            🚛 从 <b style="color:#ffbe0b;">${surp.name}</b> 调运 <b style="color:#06ffa5;">${transferAmount}</b> 辆 
-                            到 <b style="color:#ff006e;">${short.name}</b>
-                        </div>`;
-                    }
+            let dispatchPlan = [];
+
+            try {
+                // 1. 尝试呼叫 Python ALNS-SA 后端
+                const stationData = stations.map(s => ({ name: s.name, currentBikes: s.currentBikes }));
+                const response = await fetch('http://localhost:5000/api/dispatch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ current_stations: stationData })
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    dispatchPlan = result.plan || [];
+                } else {
+                    throw new Error('后端响应异常');
                 }
+            } catch (error) {
+                console.warn("未连接到 ALNS-SA 后端，启用前端备用逻辑:", error);
+                // 2. 如果后端没开或者报错，无缝回退到原来的本地计算逻辑
+                shortage.forEach((short, i) => {
+                    if (i < surplus.length) {
+                        const surp = surplus[i];
+                        // ✅ 修复：两侧均用 Math.max(0,...) 确保分量不为负
+                        const canSend    = Math.max(0, Math.floor((surp.currentBikes - 15) / 2)); // 积压站可转出量
+                        const needRecv   = Math.max(0, 15 - short.currentBikes);                  // 缺车站需补充量（目标15辆）
+                        // ✅ 修复：实际调运量还不能超过积压站现有车辆，防止生成方案时就超量
+                        const transferAmount = Math.min(canSend, needRecv, surp.currentBikes);
+                        if (transferAmount > 0) {
+                            dispatchPlan.push({
+                                from: surp.name,
+                                to: short.name,
+                                amount: transferAmount
+                            });
+                        }
+                    }
+                });
+            }
+
+            // 3. 渲染最终方案（不论是后端传回来的，还是前端备用算出来的）
+            dispatchPlan.forEach(plan => {
+                html += `<div style="margin-left:20px;color:#fff;margin-bottom:5px;">
+                    🚛 从 <b style="color:#ffbe0b;">${plan.from}</b> 调运 <b style="color:#06ffa5;">${plan.amount}</b> 辆 
+                    到 <b style="color:#ff006e;">${plan.to}</b>
+                </div>`;
             });
 
             html += '</div>';
@@ -1127,16 +1152,23 @@ function executeDispatch() {
         const toStation = stations.find(s => s.name === plan.to);
 
         if (fromStation && toStation) {
-            fromStation.currentBikes -= plan.amount;
-            toStation.currentBikes += plan.amount;
+            // ✅ 修复：实际可调运量不能超过出发站现有车辆数，防止出现负数
+            const actualAmount = Math.min(plan.amount, Math.max(0, fromStation.currentBikes));
+            if (actualAmount <= 0) {
+                addLog(`调度跳过：${plan.from} 当前无可用车辆`, 'warning');
+                return;
+            }
+
+            fromStation.currentBikes -= actualAmount;
+            fromStation.currentBikes = Math.max(0, fromStation.currentBikes); // 双重保险
+            toStation.currentBikes   += actualAmount;
 
             dispatchHistory.unshift({
                 time: `${currentHour}:${String(currentMinute).padStart(2, '0')}`,
-                desc: `从 ${plan.from} 调运 ${plan.amount} 辆到 ${plan.to}`
+                desc: `从 ${plan.from} 调运 ${actualAmount} 辆到 ${plan.to}`
             });
 
-            // 添加日志记录
-            addLog(`调度: ${plan.from} → ${plan.to} (${plan.amount}辆)`, 'dispatch');
+            addLog(`调度: ${plan.from} → ${plan.to} (${actualAmount}辆)`, 'dispatch');
         }
     });
 
